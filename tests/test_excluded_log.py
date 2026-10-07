@@ -1,11 +1,12 @@
 """
-Tests für das Log der per ignore.txt gefilterten Einträge
+Tests für das Log der nicht heruntergeladenen Einträge
 (write_excluded_log(), EXCLUDED_LOG_FILE) in ravelry-downloader.py.
 
 Deckt ab:
-  - try_download() trägt per Datei-Filter übersprungene Dateien ins Log ein
-  - process_reference_collections() trägt per Collection-Filter übersprungene
-    Collections ins Log ein
+  - try_download() trägt per ignore.txt gefilterte Dateien ins Log ein
+  - process_reference_collections() trägt per collections.txt NICHT
+    aktivierte Collections ins Log ein (INCLUDE-Logik: ohne Freigabe wird
+    nicht geladen)
   - das Log wird bei jedem main()-Lauf überschrieben (nicht kumulativ)
   - ohne Ausschlüsse in diesem Lauf wird KEINE Log-Datei angelegt
 """
@@ -56,11 +57,13 @@ class TestTryDownloadLogsExcludedFiles:
 
 
 class TestProcessReferenceCollectionsLogsExcluded:
-    def test_ignored_collection_is_recorded(self, downloader, isolated_download_dir):
+    def test_not_included_collection_is_recorded(self, downloader, isolated_download_dir):
+        """INCLUDE-Logik: eine Collection, die NICHT in collection_includes
+        steht, wird nicht geladen und landet im Excluded-Log."""
         downloader.process_reference_collections(
             collections=[IGNORED_COLLECTION],
             ignore_patterns=[],
-            collection_excludes=["213142"],
+            collection_includes=[],  # nichts aktiviert
         )
 
         assert len(downloader.excluded_this_run) == 1

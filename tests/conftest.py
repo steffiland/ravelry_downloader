@@ -51,12 +51,14 @@ def isolated_download_dir(tmp_path, downloader, monkeypatch):
     download_dir = tmp_path / "ravelry_downloads"
     download_dir.mkdir()
     ignore_file = download_dir / "ignore.txt"
+    collections_file = download_dir / "collections.txt"
     sync_file = download_dir / ".collection_sync.json"
     skipped_report_file = download_dir / "skipped_non_downloadable.txt"
     excluded_log_file = download_dir / "excluded_by_ignore.txt"
 
     monkeypatch.setattr(downloader, "DOWNLOAD_DIR", str(download_dir))
     monkeypatch.setattr(downloader, "IGNORE_FILE", str(ignore_file))
+    monkeypatch.setattr(downloader, "COLLECTIONS_FILE", str(collections_file))
     monkeypatch.setattr(downloader, "COLLECTION_SYNC_FILE", str(sync_file))
     monkeypatch.setattr(downloader, "SKIPPED_REPORT_FILE", str(skipped_report_file))
     monkeypatch.setattr(downloader, "EXCLUDED_LOG_FILE", str(excluded_log_file))

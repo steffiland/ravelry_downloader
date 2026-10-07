@@ -82,39 +82,7 @@ uv run ravelry-downloader.py
 uv run --project . ravelry-downloader.py
 ```
 
-Downloads landen in `ravelry_downloads/`.  
-Beim ersten Start wird dort `ignore.txt` erstellt – darin können Dateinamen-Fragmente
-eingetragen werden, die übersprungen werden sollen (z. B. `_NL.pdf` für niederländische
-Versionen).
-
-**Verarbeitungsreihenfolge** (innerhalb jeder Stufe in der Reihenfolge, wie die
-Ravelry-API die Library paginiert zurückgibt – keine eigene Sortierung):
-
-1. Volumes mit eigenem PDF-Bundle (eBooks, Collections mit Attachments)
-2. Einzeln gekaufte Pattern
-3. Referenz-Collections (Mitglieder werden einzeln nachgeladen)
-4. Transparenz-Report für Einträge ohne Download-Pfad
-5. Log der per `ignore.txt` gefilterten Einträge
-
-**Log-Dateien** (werden bei jedem Lauf überschrieben, zeigen also den Stand des
-*letzten* Laufs, nicht kumulativ über mehrere Läufe):
-
-| Datei | Inhalt |
-|---|---|
-| `ravelry_downloads/skipped_non_downloadable.txt` | Library-Einträge ohne erkennbaren Download-Pfad (z. B. extern erworbene Zeitschriften-Einzelhefte oder Etsy-Käufe, die nur zur Recherche in der Library stehen) |
-| `ravelry_downloads/excluded_by_ignore.txt` | Dateien/Collections, die in diesem Lauf per `ignore.txt` aktiv gefiltert wurden |
-
-Beide sind reine Logs, kein Ausschluss-Mechanismus – Ausschlüsse selbst steuert
-weiterhin `ignore.txt`.
-
-> 🔗 `ravelry_downloads/` kann (und sollte bei größeren Bibliotheken) ein
-> **Symlink auf ein NAS-Verzeichnis** sein, statt lokal auf der Platte zu
-> liegen – gerade unter WSL, wo lokaler Speicherverbrauch in die dynamisch
-> wachsende VHDX einfließt (siehe Warnhinweis unten). `ensure_download_dir()`
-> erkennt Symlinks und bricht kontrolliert ab, falls das Linkziel (NAS-Mount)
-> gerade nicht erreichbar ist, statt versehentlich einen neuen lokalen Ordner
-> anzulegen. Die `tests/`-Suite berührt `ravelry_downloads/` grundsätzlich
-> nicht – sie arbeitet ausschließlich in pytest-eigenen `tmp_path`-Verzeichnissen.
+Downloads landen in `ravelry_downloads/`.
 
 Der Downloader verarbeitet drei Arten von Library-Einträgen:
 
@@ -126,21 +94,59 @@ Der Downloader verarbeitet drei Arten von Library-Einträgen:
    alte Zeitschriften-Ausgaben, die man z. B. nur zur Recherche in die Library
    aufgenommen hat, ohne sie bei Ravelry gekauft zu haben)
 
-> **Variante 3 (Referenz-Collections) nutzt einen Opt-out-Mechanismus:**
-> Bei jedem Lauf trägt das Script neu gefundene Referenz-Collections automatisch
-> als `collection:<id>  # <Titel> (<n> Pattern)` in `ignore.txt` ein – sie werden
-> also standardmäßig **nicht** herunterladen. Willst du eine bestimmte Collection
-> doch laden (z. B. weil sie wie „YARN – The After Party" tatsächlich kostenlose
-> Ravelry-Downloads enthält), lösche einfach ihre Zeile aus `ignore.txt`.
-> Welche IDs bereits automatisch eingetragen wurden, merkt sich das Script in
-> `ravelry_downloads/.collection_sync.json` – eine von dir gelöschte Zeile wird
-> dadurch beim nächsten Lauf **nicht** wieder automatisch hinzugefügt.
->
-> Das ist besonders relevant, wenn Patterns/Zeitschriften, die man anderweitig
-> gekauft und nur zu Recherchezwecken in die Library aufgenommen hat (um Ravelry
-> als durchsuchbare "Single Source of Truth" für die eigene Mustersammlung zu
-> nutzen), nicht versehentlich zu hunderten API-Calls für nicht-downloadbare
-> Inhalte führen sollen.
+**Zwei getrennte Steuer-Dateien mit UNTERSCHIEDLICHER Logik:**
+
+| Datei | Logik | Gilt für |
+|---|---|---|
+| `ravelry_downloads/ignore.txt` | **EXCLUDE** – alles wird geladen, außer was hier als Dateinamen-Fragment steht (z. B. `_NL.pdf`) | ALLE Downloads, auch Dateien innerhalb einer per `collections.txt` aktivierten Referenz-Collection |
+| `ravelry_downloads/collections.txt` | **INCLUDE** – nichts wird geladen, außer eine Collection ist hier explizit aktiviert | NUR Referenz-Collections (Variante 3) |
+
+Beide Dateien werden beim ersten Start automatisch mit Beispiel-Inhalt angelegt.
+
+**`collections.txt`-Syntax** (Katalog zum Review, Opt-in statt Opt-out):
+
+```
+collection:213142                 <- AKTIV, wird heruntergeladen
+#collection:393415                 <- INAKTIV (Standard für neue Funde)
+```
+
+Bei jedem Lauf trägt das Script neu gefundene Referenz-Collections automatisch
+**inaktiv** (mit führendem `#`) ein – so entsteht eine vollständige, durchsuchbare
+Katalogliste aller jemals gefundenen Collections, ohne dass versehentlich etwas
+heruntergeladen wird. Zum Aktivieren einfach das führende `#` vor der Zeile
+entfernen. Welche IDs schon einmal in den Katalog eingetragen wurden, merkt sich
+das Script in `ravelry_downloads/.collection_sync.json`, damit eine bekannte
+Collection beim nächsten Lauf nicht erneut angehängt wird – unabhängig davon,
+ob du sie inzwischen aktiviert hast oder nicht.
+
+**Verarbeitungsreihenfolge** (innerhalb jeder Stufe in der Reihenfolge, wie die
+Ravelry-API die Library paginiert zurückgibt – keine eigene Sortierung):
+
+1. Volumes mit eigenem PDF-Bundle (eBooks, Collections mit Attachments)
+2. Einzeln gekaufte Pattern
+3. Referenz-Collections (nur aktivierte, Mitglieder werden einzeln nachgeladen)
+4. Transparenz-Report für Einträge ohne Download-Pfad
+5. Log der nicht heruntergeladenen Einträge
+
+**Log-Dateien** (werden bei jedem Lauf überschrieben, zeigen also den Stand des
+*letzten* Laufs, nicht kumulativ über mehrere Läufe):
+
+| Datei | Inhalt |
+|---|---|
+| `ravelry_downloads/skipped_non_downloadable.txt` | Library-Einträge ohne erkennbaren Download-Pfad (z. B. extern erworbene Zeitschriften-Einzelhefte oder Etsy-Käufe, die nur zur Recherche in der Library stehen) |
+| `ravelry_downloads/excluded_by_ignore.txt` | Dateien/Collections, die in diesem Lauf NICHT heruntergeladen wurden (per `ignore.txt` oder fehlender Freigabe in `collections.txt`) |
+
+Beide sind reine Logs, kein Steuer-Mechanismus – Ausschlüsse/Freigaben selbst
+steuern weiterhin `ignore.txt` bzw. `collections.txt`.
+
+> 🔗 `ravelry_downloads/` kann (und sollte bei größeren Bibliotheken) ein
+> **Symlink auf ein NAS-Verzeichnis** sein, statt lokal auf der Platte zu
+> liegen – gerade unter WSL, wo lokaler Speicherverbrauch in die dynamisch
+> wachsende VHDX einfließt (siehe Warnhinweis unten). `ensure_download_dir()`
+> erkennt Symlinks und bricht kontrolliert ab, falls das Linkziel (NAS-Mount)
+> gerade nicht erreichbar ist, statt versehentlich einen neuen lokalen Ordner
+> anzulegen. Die `tests/`-Suite berührt `ravelry_downloads/` grundsätzlich
+> nicht – sie arbeitet ausschließlich in pytest-eigenen `tmp_path`-Verzeichnissen.
 
 > ⚠️ Bei einer großen Bibliothek (hunderte Einträge, teils zweistellige MB pro PDF)
 > kann ein kompletter Lauf viel Speicherplatz brauchen. Unter WSL wächst die virtuelle
@@ -171,10 +177,10 @@ uv run --project . pytest -v
 
 | Testdatei | Deckt ab |
 |---|---|
-| `test_ignore_logic.py` | `ignore.txt`-Parsing, Datei-/Collection-Filter, Inline-Kommentare |
-| `test_collection_sync.py` | Referenz-Collection-Erkennung, Opt-out-Sync, Idempotenz |
+| `test_ignore_logic.py` | `ignore.txt`-Parsing (EXCLUDE) und `collections.txt`-Parsing (INCLUDE), Inline-Kommentare |
+| `test_collection_sync.py` | Referenz-Collection-Erkennung, Katalog-Sync (inaktive Einträge), Idempotenz |
 | `test_categorization.py` | Kategorisierung aller Library-Eintrags-Formen, Transparenz-Report |
-| `test_excluded_log.py` | Log der per `ignore.txt` gefilterten Einträge |
+| `test_excluded_log.py` | Log der nicht heruntergeladenen Einträge |
 | `test_ravelry_common.py` | Dateinamen-Bereinigung, PDF-Erkennung, Cookie-Validierung |
 
 Bei jeder Änderung an `ravelry-downloader.py` oder `ravelry_common.py` sollten
@@ -292,9 +298,11 @@ uv run --project . ravelry-downloader.py
 │   └── ravelry-api-kb.md   # API-Dokumentation / Knowledge Base
 │
 ├── ravelry_downloads/       # Zielordner Downloader (wird angelegt, ggf. NAS-Symlink)
-│   ├── ignore.txt           # Ausschlussliste (wird beim ersten Start angelegt)
+│   ├── ignore.txt           # EXCLUDE: Dateinamen-Filter (wird beim ersten Start angelegt)
+│   ├── collections.txt     # INCLUDE: Collection-Freigabe-Katalog (wird beim ersten Start angelegt)
+│   ├── .collection_sync.json  # Merkt sich bereits in den Katalog eingetragene IDs
 │   ├── skipped_non_downloadable.txt  # Log: Einträge ohne Download-Pfad
-│   └── excluded_by_ignore.txt        # Log: per ignore.txt gefilterte Einträge
+│   └── excluded_by_ignore.txt        # Log: nicht heruntergeladene Einträge
 └── test_downloads/          # Zielordner Test-Script (wird angelegt)
 ```
 

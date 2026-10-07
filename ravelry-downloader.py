@@ -25,11 +25,28 @@ Lädt alle PDFs aus der eigenen Ravelry-Bibliothek herunter:
      z.B. Scheepjes "YARN - The After Party"). Diese werden über
      /pattern_sources/{id}/patterns.json aufgelistet und einzeln geladen.
 
-Ausschlüsse via ravelry_downloads/ignore.txt:
-  - Normale Zeile  → Substring-Filter gegen den Ziel-Dateinamen
-  - 'collection:<id-oder-teiltitel>' → überspringt eine ganze Referenz-Collection
-    (Variante 3 oben) komplett, z.B. 'collection:213142' oder
-    'collection:Yarn - The After Party'
+STEUERUNG ÜBER ZWEI GETRENNTE DATEIEN (unterschiedliche Logik!):
+
+  ravelry_downloads/ignore.txt – EXCLUDE-Logik, gilt für ALLE Downloads
+    Eine Zeile = Substring-Filter gegen den Ziel-DATEINAMEN. Alles wird
+    geladen, AUSSER was hier als Zeile steht (z.B. '_NL.pdf' für
+    niederländische Versionen). Gilt überall – auch für Dateien innerhalb
+    einer per collections.txt aktivierten Referenz-Collection.
+
+  ravelry_downloads/collections.txt – INCLUDE-Logik, nur für Variante 3
+    Eine Zeile = 'collection:<id-oder-teiltitel>'. Nur AKTIVE (nicht
+    auskommentierte) Zeilen schalten den Download dieser Collection frei:
+      collection:213142                 <- AKTIV, wird heruntergeladen
+      #collection:213142                 <- INAKTIV (Standard für neue Funde)
+    Zum Aktivieren einfach das führende '#' entfernen. Neu gefundene
+    Collections werden bei jedem Lauf automatisch INAKTIV ergänzt, sodass
+    hier immer eine vollständige, durchsuchbare Katalogliste ALLER jemals
+    gefundenen Referenz-Collections zum Review entsteht – ohne dass
+    versehentlich etwas heruntergeladen wird. Welche IDs schon einmal in
+    den Katalog eingetragen wurden, merkt sich das Script in
+    ravelry_downloads/.collection_sync.json, damit eine bereits bekannte
+    Collection beim nächsten Lauf nicht erneut angehängt wird (unabhängig
+    davon, ob du sie aktiviert oder deaktiviert gelassen hast).
 
 VERARBEITUNGSREIHENFOLGE (main()):
   Schritt 1: Volumes mit eigenem PDF-Bundle (process_volumes)
@@ -46,22 +63,10 @@ des letzten Laufs, nicht kumulativ über mehrere Läufe):
   - ravelry_downloads/skipped_non_downloadable.txt
     Library-Einträge ohne erkennbaren Download-Pfad (Schritt 4).
   - ravelry_downloads/excluded_by_ignore.txt
-    Dateien/Collections, die in DIESEM Lauf per ignore.txt gefiltert wurden
-    (Schritt 5). Reines Log, kein Ausschluss-Mechanismus – zum Ändern der
-    Ausschlüsse selbst ignore.txt bearbeiten.
-
-AUTOMATISCHER OPT-OUT-SYNC für Referenz-Collections (Variante 3):
---------------------------------------------------------------------
-Referenz-Collections werden standardmäßig NICHT herunterladen (praktisch für
-Bibliotheken, in die z.B. gekaufte Zeitschriften nur zu Recherche-Zwecken
-eingetragen wurden, ohne dass ein Download je funktionieren soll). Bei jedem
-Lauf schreibt das Script neu gefundene Referenz-Collections automatisch als
-'collection:<id>  # <Titel> (<Anzahl> Pattern)' in ignore.txt – du musst
-nichts manuell eintragen. Willst du eine bestimmte Collection doch
-herunterladen, lösche einfach ihre Zeile aus ignore.txt. Welche IDs schon
-einmal eingetragen wurden, merkt sich das Script in
-ravelry_downloads/.collection_sync.json – eine gelöschte Zeile wird dadurch
-NICHT beim nächsten Lauf automatisch wieder hinzugefügt.
+    Dateien/Collections, die in DIESEM Lauf per ignore.txt bzw.
+    collections.txt NICHT heruntergeladen wurden (Schritt 5). Reines Log,
+    kein Steuer-Mechanismus – zum Ändern selbst ignore.txt/collections.txt
+    bearbeiten.
 
 KOSTENPFLICHTIGE DOWNLOADS:
 ----------------------------
@@ -87,14 +92,15 @@ from ravelry_common import (
 BASE_URL             = "https://api.ravelry.com"
 DOWNLOAD_DIR         = "ravelry_downloads"
 IGNORE_FILE          = os.path.join(DOWNLOAD_DIR, "ignore.txt")
+COLLECTIONS_FILE     = os.path.join(DOWNLOAD_DIR, "collections.txt")
 COLLECTION_SYNC_FILE = os.path.join(DOWNLOAD_DIR, ".collection_sync.json")
 
 # Log-Dateien (werden bei JEDEM Lauf überschrieben, zeigen also immer den
-# Stand des letzten Laufs – kein Ausschluss-Mechanismus, nur Transparenz):
+# Stand des letzten Laufs – kein Steuer-Mechanismus, nur Transparenz):
 #   - SKIPPED_REPORT_FILE: Library-Einträge ohne erkennbaren Download-Pfad
 #     (siehe report_unhandled_items())
-#   - EXCLUDED_LOG_FILE:   Dateien, die per ignore.txt (Datei- ODER
-#     Collection-Ausschluss) in diesem Lauf übersprungen wurden
+#   - EXCLUDED_LOG_FILE:   Dateien/Collections, die in diesem Lauf NICHT
+#     heruntergeladen wurden (per ignore.txt ODER collections.txt)
 SKIPPED_REPORT_FILE = os.path.join(DOWNLOAD_DIR, "skipped_non_downloadable.txt")
 EXCLUDED_LOG_FILE   = os.path.join(DOWNLOAD_DIR, "excluded_by_ignore.txt")
 
@@ -102,33 +108,33 @@ EXCLUDED_LOG_FILE   = os.path.join(DOWNLOAD_DIR, "excluded_by_ignore.txt")
 # restlichen Lauf wiederverwendet, damit nicht pro Datei neu eingeloggt wird.
 browser_cookies: dict | None = None
 
-# Sammelt alle in diesem Lauf per ignore.txt übersprungenen Dateinamen/Titel,
+# Sammelt alle in diesem Lauf nicht heruntergeladenen Dateinamen/Titel,
 # wird am Ende von main() als EXCLUDED_LOG_FILE geschrieben (siehe
 # write_excluded_log()). Modul-globaler Zustand analog zu browser_cookies.
 excluded_this_run: list[str] = []
 
 
 # ---------------------------------------------------------------------------
-# Hilfsfunktionen
+# ignore.txt – Dateinamen-Filter (EXCLUDE-Logik, gilt für ALLE Downloads)
 # ---------------------------------------------------------------------------
 
-def load_ignore_patterns(ignore_filepath: str) -> tuple[list[str], list[str]]:
+def load_ignore_patterns(ignore_filepath: str) -> list[str]:
     """
-    Lädt Ignorier-Muster aus einer Textdatei.
+    Lädt Dateinamen-Ignorier-Muster aus ignore.txt.
     Erstellt eine Beispiel-Datei, falls noch keine existiert.
 
-    Es gibt zwei Arten von Zeilen:
-      - normale Zeile       -> Substring-Filter gegen Ziel-DATEINAMEN
-      - 'collection:<wert>' -> überspringt eine ganze Referenz-Collection
-                                (<wert> = pattern_source_id ODER Teil des Titels)
-
-    Gibt (filename_patterns, collection_excludes) zurück.
+    EXCLUDE-Logik: eine Zeile = Substring-Filter gegen den Ziel-DATEINAMEN.
+    Alles wird geladen, AUSSER was hier als Zeile steht. Gilt für JEDEN
+    Download (Volumes, Einzelpattern, UND Dateien innerhalb einer per
+    collections.txt aktivierten Referenz-Collection).
     """
     if not os.path.exists(ignore_filepath):
         os.makedirs(os.path.dirname(ignore_filepath), exist_ok=True)
         default_content = (
             "# Trage hier Dateinamen oder Namensbestandteile ein, die NICHT\n"
             "# heruntergeladen werden sollen. Zeilen mit '#' = Kommentar.\n"
+            "# Gilt für ALLE Downloads, auch innerhalb aktivierter Collections\n"
+            "# (siehe collections.txt).\n"
             "#\n"
             "# Beispiele für Sprach-Ausschlüsse:\n"
             "# _NL.pdf\n"
@@ -136,44 +142,26 @@ def load_ignore_patterns(ignore_filepath: str) -> tuple[list[str], list[str]]:
             "# _ES.pdf\n"
             "# _IT.pdf\n"
             "# _RU.pdf\n"
-            "#\n"
-            "# Ganze Referenz-Collections ausschließen (patterns_count>1 ohne\n"
-            "# eigenes PDF-Bundle, z.B. Scheepjes 'YARN - The After Party'):\n"
-            "# Entweder per pattern_source_id oder per (Teil-)Titel:\n"
-            "# collection:213142\n"
-            "# collection:Yarn - The After Party\n"
         )
         with open(ignore_filepath, "w", encoding="utf-8") as f:
             f.write(default_content)
         print(f"ℹ️  Neue Ignorier-Datei erstellt: '{ignore_filepath}'")
-        return [], []
+        return []
 
     filename_patterns = []
-    collection_excludes = []
     with open(ignore_filepath, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            # Inline-Kommentare abschneiden (z.B. aus den automatisch von
-            # sync_new_reference_collections() generierten Zeilen:
-            # 'collection:213142  # Titel (147 Pattern)')
+            # Inline-Kommentare abschneiden
             line_without_comment = line.split("#", 1)[0].strip()
-            if not line_without_comment:
-                continue
-
-            if line_without_comment.lower().startswith("collection:"):
-                value = line_without_comment.split(":", 1)[1].strip().lower()
-                if value:
-                    collection_excludes.append(value)
-            else:
+            if line_without_comment:
                 filename_patterns.append(line_without_comment.lower())
 
     if filename_patterns:
         print(f"ℹ️  {len(filename_patterns)} Datei-Ignorier-Muster aus '{ignore_filepath}' geladen.")
-    if collection_excludes:
-        print(f"ℹ️  {len(collection_excludes)} Collection-Ausschluss(e) aus '{ignore_filepath}' geladen.")
-    return filename_patterns, collection_excludes
+    return filename_patterns
 
 
 def is_ignored(filename: str, ignore_patterns: list[str]) -> bool:
@@ -182,19 +170,88 @@ def is_ignored(filename: str, ignore_patterns: list[str]) -> bool:
     return any(p in filename_lower for p in ignore_patterns)
 
 
-def is_collection_ignored(collection_item: dict, collection_excludes: list[str]) -> bool:
+# ---------------------------------------------------------------------------
+# collections.txt – Referenz-Collection-Freigabe (INCLUDE-Logik)
+# ---------------------------------------------------------------------------
+
+def load_collection_includes(collections_filepath: str) -> list[str]:
     """
-    Prüft, ob eine Referenz-Collection per 'collection:<id-oder-titel>' in
-    ignore.txt ausgeschlossen wurde.
+    Lädt die Liste AKTIVER Collection-Freigaben aus collections.txt.
+    Erstellt eine Beispiel-Datei, falls noch keine existiert.
+
+    INCLUDE-Logik: Standard ist NICHT laden. Nur eine AKTIVE Zeile (ohne
+    führendes '#') schaltet den Download dieser Collection frei:
+      collection:213142                 <- AKTIV, wird heruntergeladen
+      #collection:213142                 <- INAKTIV (Standard für neue Funde)
+    <id-oder-teiltitel> = pattern_source_id ODER Teil des Titels.
+    """
+    if not os.path.exists(collections_filepath):
+        os.makedirs(os.path.dirname(collections_filepath), exist_ok=True)
+        default_content = (
+            "# Referenz-Collections (patterns_count>1 ohne eigenes PDF-Bundle,\n"
+            "# z.B. Scheepjes 'YARN - The After Party') werden hier als Katalog\n"
+            "# gesammelt. Standard ist NICHT laden (INCLUDE-Logik) – nur eine\n"
+            "# AKTIVE Zeile (ohne führendes '#') schaltet den Download frei:\n"
+            "#\n"
+            "#   collection:213142                 <- AKTIV, wird heruntergeladen\n"
+            "#   #collection:213142                 <- inaktiv (Standard)\n"
+            "#\n"
+            "# Zum Aktivieren einfach das führende '#' vor der Zeile entfernen.\n"
+            "# <wert> = pattern_source_id ODER Teil des Titels, z.B.:\n"
+            "#   collection:Yarn - The After Party\n"
+        )
+        with open(collections_filepath, "w", encoding="utf-8") as f:
+            f.write(default_content)
+        print(f"ℹ️  Neue Collections-Datei erstellt: '{collections_filepath}'")
+        return []
+
+    collection_includes = []
+    with open(collections_filepath, "r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            # Führendes '#' abstreifen, um AKTIV ('collection:...') von
+            # INAKTIV ('#collection:...') zu unterscheiden. Zeilen, die NACH
+            # dem Abstreifen nicht mit 'collection:' beginnen, sind reine
+            # Kommentare.
+            stripped_hash = line.lstrip("#").strip()
+            if not stripped_hash.lower().startswith("collection:"):
+                continue  # reiner Kommentar
+
+            is_active = not line.startswith("#")
+            if not is_active:
+                continue
+
+            # Inline-Kommentar abschneiden: 'collection:213142  # Titel'
+            value = stripped_hash.split(":", 1)[1]
+            value = value.split("#", 1)[0].strip().lower()
+            if value:
+                collection_includes.append(value)
+
+    if collection_includes:
+        print(f"ℹ️  {len(collection_includes)} aktive Collection-Freigabe(n) aus "
+              f"'{collections_filepath}' geladen.")
+    return collection_includes
+
+
+def is_collection_included(collection_item: dict, collection_includes: list[str]) -> bool:
+    """
+    Prüft, ob eine Referenz-Collection per AKTIVER 'collection:<id-oder-titel>'-
+    Zeile in collections.txt zum Download freigegeben wurde (INCLUDE-Logik:
+    Standard ist NICHT laden, nur explizit aktivierte Collections werden
+    geladen).
     """
     src_id = str(collection_item.get("pattern_source_id", "")).lower()
     title  = (collection_item.get("title") or "").lower()
-    return any(excl == src_id or excl in title for excl in collection_excludes)
+    return any(incl == src_id or incl in title for incl in collection_includes)
 
 
 def load_synced_collection_ids() -> set[int]:
-    """Lädt die Menge der pattern_source_ids, die schon einmal in ignore.txt
-    automatisch eingetragen wurden (siehe sync_new_reference_collections)."""
+    """Lädt die Menge der pattern_source_ids, die schon einmal in
+    collections.txt automatisch eingetragen wurden (siehe
+    sync_new_reference_collections)."""
     if not os.path.exists(COLLECTION_SYNC_FILE):
         return set()
     try:
@@ -212,13 +269,15 @@ def save_synced_collection_ids(ids: set[int]) -> None:
 def sync_new_reference_collections(collections: list[dict]) -> None:
     """
     Trägt NEUE Referenz-Collections (die noch nie zuvor gesehen wurden)
-    automatisch als 'collection:<id>  # <Titel> (<n> Pattern)' in ignore.txt
-    ein. So sind sie standardmäßig vom Download ausgeschlossen – wer eine
-    bestimmte Collection doch laden will, löscht einfach ihre Zeile.
+    automatisch INAKTIV als '#collection:<id>  # <Titel> (<n> Pattern)' in
+    collections.txt ein. So entsteht eine vollständige, durchsuchbare
+    Katalogliste zum Review, ohne dass versehentlich etwas heruntergeladen
+    wird. Zum Aktivieren einfach das führende '#' entfernen.
 
-    Bereits einmal synchronisierte IDs werden in COLLECTION_SYNC_FILE
-    gemerkt, damit eine manuell gelöschte Zeile NICHT erneut hinzugefügt
-    wird (sonst könnte man nie dauerhaft "ja, bitte laden" sagen).
+    Bereits einmal in den Katalog eingetragene IDs werden in
+    COLLECTION_SYNC_FILE gemerkt, damit eine bekannte Collection beim
+    nächsten Lauf nicht erneut angehängt wird – unabhängig davon, ob du sie
+    inzwischen aktiviert oder deaktiviert gelassen hast.
     """
     already_synced = load_synced_collection_ids()
     new_ones = [
@@ -229,25 +288,29 @@ def sync_new_reference_collections(collections: list[dict]) -> None:
         return
 
     lines = [
-        f"collection:{c['pattern_source_id']}  "
+        f"#collection:{c['pattern_source_id']}  "
         f"# {c.get('title', 'Unbenannt')} ({c.get('patterns_count', '?')} Pattern)"
         for c in new_ones
     ]
     header = (
         f"\n# --- Automatisch ergänzt am {time.strftime('%Y-%m-%d %H:%M')} "
         f"({len(new_ones)} neue Referenz-Collection(en)) ---\n"
-        "# Standardmäßig ausgeschlossen. Zeile löschen = Collection WIRD "
+        "# Standardmäßig INAKTIV. Führendes '#' entfernen = Collection WIRD "
         "heruntergeladen.\n"
     )
-    with open(IGNORE_FILE, "a", encoding="utf-8") as f:
+    with open(COLLECTIONS_FILE, "a", encoding="utf-8") as f:
         f.write(header + "\n".join(lines) + "\n")
 
     already_synced.update(c["pattern_source_id"] for c in new_ones)
     save_synced_collection_ids(already_synced)
 
-    print(f"ℹ️  {len(new_ones)} neue Referenz-Collection(en) automatisch in "
-          f"'{IGNORE_FILE}' eingetragen (standardmäßig ausgeschlossen).")
+    print(f"ℹ️  {len(new_ones)} neue Referenz-Collection(en) automatisch (inaktiv) in "
+          f"'{COLLECTIONS_FILE}' eingetragen.")
 
+
+# ---------------------------------------------------------------------------
+# Allgemeine Hilfsfunktionen
+# ---------------------------------------------------------------------------
 
 def ensure_download_dir():
     """Stellt sicher, dass das Download-Verzeichnis existiert (Symlink-sicher)."""
@@ -265,6 +328,10 @@ def try_download(url: str, filename: str, label: str, ignore_patterns: list[str]
     """
     Zentraler Download-Helper mit automatischem Browser-Login-Fallback.
     Gibt zurück: 'downloaded', 'skipped_exists', 'skipped_ignore', 'error'
+
+    is_ignored() (ignore.txt) wird hier für JEDEN Download geprüft, auch für
+    Dateien innerhalb einer per collections.txt aktivierten Referenz-
+    Collection – die beiden Mechanismen sind unabhängig und wirken beide.
     """
     global browser_cookies
 
@@ -552,7 +619,7 @@ def report_unhandled_items(items: list) -> None:
             f.write(
                 "# Library-Einträge ohne erkennbaren Ravelry-Download-Pfad.\n"
                 "# Diese Datei wird bei jedem Lauf überschrieben – reiner Report,\n"
-                "# KEIN Ausschluss-Mechanismus (im Gegensatz zu ignore.txt).\n"
+                "# KEIN Steuer-Mechanismus (im Gegensatz zu ignore.txt/collections.txt).\n"
                 "# Typischerweise extern erworbene Patterns/Zeitschriften, die nur\n"
                 "# zu Recherchezwecken in die Library aufgenommen wurden.\n\n"
             )
@@ -565,10 +632,11 @@ def report_unhandled_items(items: list) -> None:
 
 def write_excluded_log() -> None:
     """
-    Schreibt alle in diesem Lauf per ignore.txt übersprungenen Einträge
-    (Datei- UND Collection-Filter) nach EXCLUDED_LOG_FILE. Wird bei JEDEM
-    Lauf überschrieben – zeigt also nur, was im LETZTEN Lauf aktiv gefiltert
-    wurde (nicht kumulativ über mehrere Läufe).
+    Schreibt alle in diesem Lauf nicht heruntergeladenen Einträge (per
+    ignore.txt ODER per fehlender Freigabe in collections.txt) nach
+    EXCLUDED_LOG_FILE. Wird bei JEDEM Lauf überschrieben – zeigt also nur,
+    was im LETZTEN Lauf aktiv gefiltert wurde (nicht kumulativ über
+    mehrere Läufe).
     """
     if not excluded_this_run:
         return
@@ -576,13 +644,13 @@ def write_excluded_log() -> None:
     try:
         with open(EXCLUDED_LOG_FILE, "w", encoding="utf-8") as f:
             f.write(
-                "# Durch ignore.txt übersprungene Einträge (letzter Lauf).\n"
+                "# Nicht heruntergeladene Einträge (letzter Lauf).\n"
                 "# Diese Datei wird bei jedem Lauf überschrieben – reines Log,\n"
-                "# zum Ändern der Ausschlüsse selbst ignore.txt bearbeiten.\n\n"
+                "# zum Ändern selbst ignore.txt bzw. collections.txt bearbeiten.\n\n"
             )
             for entry in excluded_this_run:
                 f.write(f"{entry}\n")
-        print(f"\nℹ️  {len(excluded_this_run)} per ignore.txt übersprungene Einträge "
+        print(f"\nℹ️  {len(excluded_this_run)} nicht heruntergeladene Einträge "
               f"protokolliert: {EXCLUDED_LOG_FILE}")
     except OSError as e:
         print(f"⚠️  Excluded-Log konnte nicht geschrieben werden: {e}")
@@ -591,11 +659,13 @@ def write_excluded_log() -> None:
 def process_reference_collections(
     collections: list[dict],
     ignore_patterns: list[str],
-    collection_excludes: list[str],
+    collection_includes: list[str],
 ) -> dict:
     """
-    Lädt für jede Referenz-Collection alle enthaltenen Pattern einzeln
-    herunter (sofern sie ravelry_download anbieten, z.B. kostenlos sind).
+    Lädt für jede per collections.txt AKTIVIERTE Referenz-Collection alle
+    enthaltenen Pattern einzeln herunter (sofern sie ravelry_download
+    anbieten, z.B. kostenlos sind). Nicht aktivierte Collections werden
+    übersprungen und ins Excluded-Log eingetragen.
     """
     stats = {"downloaded": 0, "skipped_exists": 0, "skipped_ignore": 0, "error": 0}
 
@@ -603,10 +673,10 @@ def process_reference_collections(
         src_id = col.get("pattern_source_id")
         title  = col.get("title") or f"Collection_{src_id}"
 
-        if is_collection_ignored(col, collection_excludes):
-            print(f"🚫 Collection übersprungen (ignore.txt): {title!r} (source_id={src_id})")
+        if not is_collection_included(col, collection_includes):
+            print(f"🚫 Collection nicht aktiviert (collections.txt): {title!r} (source_id={src_id})")
             excluded_this_run.append(
-                f"{title}  (Collection-Filter, source_id={src_id}, "
+                f"{title}  (Collection nicht aktiviert, source_id={src_id}, "
                 f"{col.get('patterns_count', '?')} Pattern)"
             )
             continue
@@ -686,7 +756,7 @@ def process_reference_collections(
 def main():
     excluded_this_run.clear()  # Log soll nur den aktuellen Lauf zeigen
     ensure_download_dir()
-    ignore_patterns, collection_excludes = load_ignore_patterns(IGNORE_FILE)
+    ignore_patterns = load_ignore_patterns(IGNORE_FILE)
     username = get_current_username()
     print(f"👤 Eingeloggt als: {username}\n")
 
@@ -714,13 +784,13 @@ def main():
             print(f"\n📚 {len(reference_collections)} Referenz-Collection(en) gefunden "
                   f"(ohne eigenes PDF-Bundle, Mitglieder einzeln verlinkt).")
 
-            # Neue Collections automatisch als Opt-out in ignore.txt eintragen,
-            # dann die Ignore-Liste neu einlesen (enthält jetzt die frischen Einträge).
+            # Neue Collections automatisch (inaktiv) in collections.txt eintragen,
+            # dann die Freigabeliste neu einlesen (enthält jetzt die frischen Einträge).
             sync_new_reference_collections(reference_collections)
-            ignore_patterns, collection_excludes = load_ignore_patterns(IGNORE_FILE)
+            collection_includes = load_collection_includes(COLLECTIONS_FILE)
 
             stats = process_reference_collections(
-                reference_collections, ignore_patterns, collection_excludes
+                reference_collections, ignore_patterns, collection_includes
             )
             for k, v in stats.items():
                 total_stats[k] += v
@@ -729,7 +799,7 @@ def main():
     if all_items:
         report_unhandled_items(all_items)
 
-    # --- Schritt 5: Log der per ignore.txt übersprungenen Einträge ---
+    # --- Schritt 5: Log der nicht heruntergeladenen Einträge ---
     write_excluded_log()
 
     # --- Zusammenfassung ---
@@ -737,7 +807,7 @@ def main():
     print("✅ FERTIG")
     print(f"  ⬇️  Neu heruntergeladen : {total_stats['downloaded']}")
     print(f"  ➜   Bereits vorhanden  : {total_stats['skipped_exists']}")
-    print(f"  🚫  Per ignore.txt gefiltert: {total_stats['skipped_ignore']}")
+    print(f"  🚫  Nicht heruntergeladen: {total_stats['skipped_ignore']}")
     print(f"  ❌  Fehler             : {total_stats['error']}")
     print("=" * 50)
 
