@@ -87,6 +87,26 @@ Beim ersten Start wird dort `ignore.txt` erstellt – darin können Dateinamen-F
 eingetragen werden, die übersprungen werden sollen (z. B. `_NL.pdf` für niederländische
 Versionen).
 
+**Verarbeitungsreihenfolge** (innerhalb jeder Stufe in der Reihenfolge, wie die
+Ravelry-API die Library paginiert zurückgibt – keine eigene Sortierung):
+
+1. Volumes mit eigenem PDF-Bundle (eBooks, Collections mit Attachments)
+2. Einzeln gekaufte Pattern
+3. Referenz-Collections (Mitglieder werden einzeln nachgeladen)
+4. Transparenz-Report für Einträge ohne Download-Pfad
+5. Log der per `ignore.txt` gefilterten Einträge
+
+**Log-Dateien** (werden bei jedem Lauf überschrieben, zeigen also den Stand des
+*letzten* Laufs, nicht kumulativ über mehrere Läufe):
+
+| Datei | Inhalt |
+|---|---|
+| `ravelry_downloads/skipped_non_downloadable.txt` | Library-Einträge ohne erkennbaren Download-Pfad (z. B. extern erworbene Zeitschriften-Einzelhefte oder Etsy-Käufe, die nur zur Recherche in der Library stehen) |
+| `ravelry_downloads/excluded_by_ignore.txt` | Dateien/Collections, die in diesem Lauf per `ignore.txt` aktiv gefiltert wurden |
+
+Beide sind reine Logs, kein Ausschluss-Mechanismus – Ausschlüsse selbst steuert
+weiterhin `ignore.txt`.
+
 > 🔗 `ravelry_downloads/` kann (und sollte bei größeren Bibliotheken) ein
 > **Symlink auf ein NAS-Verzeichnis** sein, statt lokal auf der Platte zu
 > liegen – gerade unter WSL, wo lokaler Speicherverbrauch in die dynamisch
@@ -153,12 +173,34 @@ uv run --project . pytest -v
 |---|---|
 | `test_ignore_logic.py` | `ignore.txt`-Parsing, Datei-/Collection-Filter, Inline-Kommentare |
 | `test_collection_sync.py` | Referenz-Collection-Erkennung, Opt-out-Sync, Idempotenz |
+| `test_categorization.py` | Kategorisierung aller Library-Eintrags-Formen, Transparenz-Report |
+| `test_excluded_log.py` | Log der per `ignore.txt` gefilterten Einträge |
 | `test_ravelry_common.py` | Dateinamen-Bereinigung, PDF-Erkennung, Cookie-Validierung |
 
 Bei jeder Änderung an `ravelry-downloader.py` oder `ravelry_common.py` sollten
 diese Tests vor dem nächsten echten Lauf grün sein – sie fangen Logikfehler
 (z. B. im `ignore.txt`-Parser) ab, ohne dafür die eigene Bibliothek anfassen
 oder PDFs herunterladen zu müssen.
+
+**Wichtig: Die Tests nutzen ausschließlich synthetische Fixtures** (fest
+einprogrammierte Beispiel-Dicts, z. B. in `test_categorization.py` die echten
+Titel aus einer Live-Analyse der Library). Sie machen **keine** echten
+API-Calls. Das bedeutet:
+
+- Ändert sich deine echte Ravelry-Bibliothek (neue Pattern, neue Collections,
+  gelöschte Einträge), bleiben alle Tests unverändert grün – sie reagieren
+  nicht automatisch darauf, weil sie nie mit den echten Daten sprechen.
+- Die Tests schützen vor **Logikfehlern** im Code (z. B. dem gefundenen Bug,
+  bei dem Inline-Kommentare in `ignore.txt` nicht korrekt abgeschnitten
+  wurden), nicht aber davor, dass Ravelry künftig eine **neue, bisher
+  unbekannte Daten-Form** liefert, die durch keine der fünf Kategorien in
+  `categorize_item()` abgedeckt ist.
+- Taucht ein neues Konstrukt in der echten Library auf, das aktuell nicht
+  passt, würde es als `orphan` oder `single_pattern_source` landen und im
+  `skipped_non_downloadable.txt`-Report sichtbar werden (nie lautlos
+  verschwinden) – aber ein Test dafür müsste erst manuell nachgezogen werden,
+  sobald ein solcher Fall real auftritt (so wie `test_categorization.py` nach
+  der Live-Analyse entstanden ist).
 
 ---
 
@@ -242,13 +284,17 @@ uv run --project . ravelry-downloader.py
 │   ├── conftest.py
 │   ├── test_ignore_logic.py
 │   ├── test_collection_sync.py
+│   ├── test_categorization.py
+│   ├── test_excluded_log.py
 │   └── test_ravelry_common.py
 │
 ├── docs/
 │   └── ravelry-api-kb.md   # API-Dokumentation / Knowledge Base
 │
-├── ravelry_downloads/       # Zielordner Downloader (wird angelegt)
-│   └── ignore.txt           # Ausschlussliste (wird beim ersten Start angelegt)
+├── ravelry_downloads/       # Zielordner Downloader (wird angelegt, ggf. NAS-Symlink)
+│   ├── ignore.txt           # Ausschlussliste (wird beim ersten Start angelegt)
+│   ├── skipped_non_downloadable.txt  # Log: Einträge ohne Download-Pfad
+│   └── excluded_by_ignore.txt        # Log: per ignore.txt gefilterte Einträge
 └── test_downloads/          # Zielordner Test-Script (wird angelegt)
 ```
 

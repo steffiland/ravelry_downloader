@@ -31,6 +31,25 @@ Ausschlüsse via ravelry_downloads/ignore.txt:
     (Variante 3 oben) komplett, z.B. 'collection:213142' oder
     'collection:Yarn - The After Party'
 
+VERARBEITUNGSREIHENFOLGE (main()):
+  Schritt 1: Volumes mit eigenem PDF-Bundle (process_volumes)
+  Schritt 2: Einzeln gekaufte Pattern (process_individual_patterns)
+  Schritt 3: Referenz-Collections, deren Mitglieder einzeln (process_reference_collections)
+  Schritt 4: Transparenz-Report für Items ohne Download-Pfad (report_unhandled_items)
+  Schritt 5: Log der per ignore.txt gefilterten Einträge (write_excluded_log)
+  Innerhalb jeder Stufe läuft es in der Reihenfolge, in der die Ravelry-API
+  die Library-Einträge paginiert zurückgibt (keine eigene Sortierung durch
+  dieses Script).
+
+LOG-DATEIEN (werden bei JEDEM Lauf überschrieben, zeigen also den Stand
+des letzten Laufs, nicht kumulativ über mehrere Läufe):
+  - ravelry_downloads/skipped_non_downloadable.txt
+    Library-Einträge ohne erkennbaren Download-Pfad (Schritt 4).
+  - ravelry_downloads/excluded_by_ignore.txt
+    Dateien/Collections, die in DIESEM Lauf per ignore.txt gefiltert wurden
+    (Schritt 5). Reines Log, kein Ausschluss-Mechanismus – zum Ändern der
+    Ausschlüsse selbst ignore.txt bearbeiten.
+
 AUTOMATISCHER OPT-OUT-SYNC für Referenz-Collections (Variante 3):
 --------------------------------------------------------------------
 Referenz-Collections werden standardmäßig NICHT herunterladen (praktisch für
@@ -65,14 +84,28 @@ from ravelry_common import (
     sanitize_filename,
 )
 
-BASE_URL         = "https://api.ravelry.com"
-DOWNLOAD_DIR     = "ravelry_downloads"
-IGNORE_FILE      = os.path.join(DOWNLOAD_DIR, "ignore.txt")
+BASE_URL             = "https://api.ravelry.com"
+DOWNLOAD_DIR         = "ravelry_downloads"
+IGNORE_FILE          = os.path.join(DOWNLOAD_DIR, "ignore.txt")
 COLLECTION_SYNC_FILE = os.path.join(DOWNLOAD_DIR, ".collection_sync.json")
+
+# Log-Dateien (werden bei JEDEM Lauf überschrieben, zeigen also immer den
+# Stand des letzten Laufs – kein Ausschluss-Mechanismus, nur Transparenz):
+#   - SKIPPED_REPORT_FILE: Library-Einträge ohne erkennbaren Download-Pfad
+#     (siehe report_unhandled_items())
+#   - EXCLUDED_LOG_FILE:   Dateien, die per ignore.txt (Datei- ODER
+#     Collection-Ausschluss) in diesem Lauf übersprungen wurden
+SKIPPED_REPORT_FILE = os.path.join(DOWNLOAD_DIR, "skipped_non_downloadable.txt")
+EXCLUDED_LOG_FILE   = os.path.join(DOWNLOAD_DIR, "excluded_by_ignore.txt")
 
 # Browser-Cookies werden lazy (erst bei Bedarf) geholt und dann für den
 # restlichen Lauf wiederverwendet, damit nicht pro Datei neu eingeloggt wird.
 browser_cookies: dict | None = None
+
+# Sammelt alle in diesem Lauf per ignore.txt übersprungenen Dateinamen/Titel,
+# wird am Ende von main() als EXCLUDED_LOG_FILE geschrieben (siehe
+# write_excluded_log()). Modul-globaler Zustand analog zu browser_cookies.
+excluded_this_run: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +274,7 @@ def try_download(url: str, filename: str, label: str, ignore_patterns: list[str]
 
     if is_ignored(clean_name, ignore_patterns):
         print(f"  🚫 Gefiltert (ignore.txt): {clean_name}")
+        excluded_this_run.append(f"{clean_name}  (Datei-Filter, {label})")
         return "skipped_ignore"
 
     target_path = os.path.join(DOWNLOAD_DIR, clean_name)
@@ -439,6 +473,121 @@ def find_reference_collections(items: list) -> list[dict]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# 4. UNVERARBEITETE EINTRÄGE (Transparenz-Report, kein Download-Versuch)
+# ---------------------------------------------------------------------------
+#
+# Nicht jeder Library-Eintrag passt in eines der drei Download-Schemata oben.
+# Beobachtet wurden u.a.:
+#   - 'single_pattern_source': pattern_source_id gesetzt, patterns_count==1,
+#     aber KEIN pattern_id (z.B. Zeitschriften-Einzelhefte wie "Star Book
+#     No. 169" oder "Filati Häkeln 02"). Verifiziert per Live-Abfrage: das
+#     verknüpfte Pattern hat weder ravelry_download noch download_location
+#     -> technisch nicht herunterladbar.
+#   - 'orphan': weder pattern_id noch pattern_source_id gesetzt (z.B. "Noctiluca
+#     Dress", ein bei Etsy erworbenes Pattern, oder "Crochet Every Way Stitch
+#     Dictionary", ein reines Nachschlagewerk ohne einzelnes PDF).
+#
+# Diese Items sind bestätigt extern erworben und ABSICHTLICH NICHT herunter-
+# zuladen (dient nur als durchsuchbare Referenz in der Library, siehe
+# docs/ravelry-api-kb.md). Statt sie lautlos zu verschlucken, werden sie
+# hier explizit erkannt und geloggt/reportet, damit nichts "verschwindet"
+# ohne dass man es nachvollziehen kann.
+
+def categorize_item(item: dict) -> str:
+    """
+    Ordnet einen Library-Eintrag genau einer Kategorie zu:
+      - 'volume_bundle'         : has_downloads=True -> eigenes PDF-Bundle
+                                   (wird von process_volumes behandelt)
+      - 'individual_pattern'    : pattern_id gesetzt, patterns_count==1,
+                                   has_downloads=False (process_individual_patterns)
+      - 'reference_collection'  : patterns_count>1, has_downloads=False
+                                   (process_reference_collections)
+      - 'single_pattern_source' : pattern_source_id gesetzt, patterns_count==1,
+                                   kein pattern_id -> i.d.R. extern erworbene
+                                   Zeitschriften-Einzelhefte, nicht downloadbar
+      - 'orphan'                : weder pattern_id noch pattern_source_id ->
+                                   i.d.R. extern erworbene Patterns/Bücher,
+                                   nur zu Recherchezwecken in der Library
+    """
+    if item.get("has_downloads"):
+        return "volume_bundle"
+    if item.get("pattern_id") and item.get("patterns_count", 1) == 1:
+        return "individual_pattern"
+    if item.get("patterns_count", 1) > 1:
+        return "reference_collection"
+    if item.get("pattern_source_id"):
+        return "single_pattern_source"
+    return "orphan"
+
+
+def find_unhandled_items(items: list) -> list[dict]:
+    """Items, die in KEINEM der drei Download-Pfade landen (single_pattern_source,
+    orphan) – werden bewusst nicht herunterladen, siehe Modulkommentar oben."""
+    return [
+        item for item in items
+        if categorize_item(item) in ("single_pattern_source", "orphan")
+    ]
+
+
+def report_unhandled_items(items: list) -> None:
+    """
+    Loggt alle unverarbeiteten Items (siehe find_unhandled_items) und schreibt
+    die vollständige Liste als Report-Datei nach DOWNLOAD_DIR. Lädt NICHTS
+    herunter – reine Transparenz, damit nichts lautlos verschwindet.
+    """
+    unhandled = find_unhandled_items(items)
+    if not unhandled:
+        return
+
+    print(f"\nℹ️  {len(unhandled)} Library-Eintrag/Einträge ohne Download-Pfad "
+          f"(typischerweise extern erworben, nur zur Recherche in der Library):")
+    for item in unhandled[:10]:
+        print(f"    - {item.get('title', 'Unbenannt')!r}")
+    if len(unhandled) > 10:
+        print(f"    … und {len(unhandled) - 10} weitere (vollständige Liste siehe Report-Datei).")
+
+    try:
+        with open(SKIPPED_REPORT_FILE, "w", encoding="utf-8") as f:
+            f.write(
+                "# Library-Einträge ohne erkennbaren Ravelry-Download-Pfad.\n"
+                "# Diese Datei wird bei jedem Lauf überschrieben – reiner Report,\n"
+                "# KEIN Ausschluss-Mechanismus (im Gegensatz zu ignore.txt).\n"
+                "# Typischerweise extern erworbene Patterns/Zeitschriften, die nur\n"
+                "# zu Recherchezwecken in die Library aufgenommen wurden.\n\n"
+            )
+            for item in unhandled:
+                f.write(f"{item.get('title', 'Unbenannt')}\n")
+        print(f"    → Vollständige Liste: {SKIPPED_REPORT_FILE}")
+    except OSError as e:
+        print(f"    ⚠️  Report konnte nicht geschrieben werden: {e}")
+
+
+def write_excluded_log() -> None:
+    """
+    Schreibt alle in diesem Lauf per ignore.txt übersprungenen Einträge
+    (Datei- UND Collection-Filter) nach EXCLUDED_LOG_FILE. Wird bei JEDEM
+    Lauf überschrieben – zeigt also nur, was im LETZTEN Lauf aktiv gefiltert
+    wurde (nicht kumulativ über mehrere Läufe).
+    """
+    if not excluded_this_run:
+        return
+
+    try:
+        with open(EXCLUDED_LOG_FILE, "w", encoding="utf-8") as f:
+            f.write(
+                "# Durch ignore.txt übersprungene Einträge (letzter Lauf).\n"
+                "# Diese Datei wird bei jedem Lauf überschrieben – reines Log,\n"
+                "# zum Ändern der Ausschlüsse selbst ignore.txt bearbeiten.\n\n"
+            )
+            for entry in excluded_this_run:
+                f.write(f"{entry}\n")
+        print(f"\nℹ️  {len(excluded_this_run)} per ignore.txt übersprungene Einträge "
+              f"protokolliert: {EXCLUDED_LOG_FILE}")
+    except OSError as e:
+        print(f"⚠️  Excluded-Log konnte nicht geschrieben werden: {e}")
+
+
 def process_reference_collections(
     collections: list[dict],
     ignore_patterns: list[str],
@@ -456,6 +605,10 @@ def process_reference_collections(
 
         if is_collection_ignored(col, collection_excludes):
             print(f"🚫 Collection übersprungen (ignore.txt): {title!r} (source_id={src_id})")
+            excluded_this_run.append(
+                f"{title}  (Collection-Filter, source_id={src_id}, "
+                f"{col.get('patterns_count', '?')} Pattern)"
+            )
             continue
 
         print(f"\n📖 Referenz-Collection: {title!r}  ({col.get('patterns_count')} Pattern, "
@@ -531,6 +684,7 @@ def process_reference_collections(
 # ---------------------------------------------------------------------------
 
 def main():
+    excluded_this_run.clear()  # Log soll nur den aktuellen Lauf zeigen
     ensure_download_dir()
     ignore_patterns, collection_excludes = load_ignore_patterns(IGNORE_FILE)
     username = get_current_username()
@@ -570,6 +724,13 @@ def main():
             )
             for k, v in stats.items():
                 total_stats[k] += v
+
+    # --- Schritt 4: Transparenz-Report für nicht verarbeitbare Einträge ---
+    if all_items:
+        report_unhandled_items(all_items)
+
+    # --- Schritt 5: Log der per ignore.txt übersprungenen Einträge ---
+    write_excluded_log()
 
     # --- Zusammenfassung ---
     print("\n" + "=" * 50)

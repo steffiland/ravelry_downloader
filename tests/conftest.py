@@ -41,17 +41,25 @@ def downloader():
 @pytest.fixture
 def isolated_download_dir(tmp_path, downloader, monkeypatch):
     """
-    Isoliert DOWNLOAD_DIR / IGNORE_FILE / COLLECTION_SYNC_FILE in ein
-    temporäres Verzeichnis, damit Tests niemals die echten Dateien unter
-    ravelry_downloads/ (insb. die echte ignore.txt) berühren.
+    Isoliert DOWNLOAD_DIR / IGNORE_FILE / COLLECTION_SYNC_FILE /
+    SKIPPED_REPORT_FILE / EXCLUDED_LOG_FILE in ein temporäres Verzeichnis,
+    damit Tests niemals die echten Dateien unter ravelry_downloads/
+    (insb. die echte ignore.txt) berühren. Setzt außerdem den modul-globalen
+    excluded_this_run-Zustand zurück, damit Tests sich nicht gegenseitig
+    über try_download()-Aufrufe hinweg beeinflussen.
     """
     download_dir = tmp_path / "ravelry_downloads"
     download_dir.mkdir()
     ignore_file = download_dir / "ignore.txt"
     sync_file = download_dir / ".collection_sync.json"
+    skipped_report_file = download_dir / "skipped_non_downloadable.txt"
+    excluded_log_file = download_dir / "excluded_by_ignore.txt"
 
     monkeypatch.setattr(downloader, "DOWNLOAD_DIR", str(download_dir))
     monkeypatch.setattr(downloader, "IGNORE_FILE", str(ignore_file))
     monkeypatch.setattr(downloader, "COLLECTION_SYNC_FILE", str(sync_file))
+    monkeypatch.setattr(downloader, "SKIPPED_REPORT_FILE", str(skipped_report_file))
+    monkeypatch.setattr(downloader, "EXCLUDED_LOG_FILE", str(excluded_log_file))
+    downloader.excluded_this_run.clear()
 
     return download_dir
