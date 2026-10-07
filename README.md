@@ -87,6 +87,15 @@ Beim ersten Start wird dort `ignore.txt` erstellt – darin können Dateinamen-F
 eingetragen werden, die übersprungen werden sollen (z. B. `_NL.pdf` für niederländische
 Versionen).
 
+> 🔗 `ravelry_downloads/` kann (und sollte bei größeren Bibliotheken) ein
+> **Symlink auf ein NAS-Verzeichnis** sein, statt lokal auf der Platte zu
+> liegen – gerade unter WSL, wo lokaler Speicherverbrauch in die dynamisch
+> wachsende VHDX einfließt (siehe Warnhinweis unten). `ensure_download_dir()`
+> erkennt Symlinks und bricht kontrolliert ab, falls das Linkziel (NAS-Mount)
+> gerade nicht erreichbar ist, statt versehentlich einen neuen lokalen Ordner
+> anzulegen. Die `tests/`-Suite berührt `ravelry_downloads/` grundsätzlich
+> nicht – sie arbeitet ausschließlich in pytest-eigenen `tmp_path`-Verzeichnissen.
+
 Der Downloader verarbeitet drei Arten von Library-Einträgen:
 
 1. **eBooks/Collections mit eigenem PDF-Bundle** (`type=pdf`-Volumes)
@@ -126,6 +135,30 @@ Gibt eine Pandas-Übersicht der eigenen Projekte und Garnvorräte aus.
 ```bash
 uv run ravelry.py
 ```
+
+---
+
+## Tests
+
+Die Logik ohne Netzwerk-/Browser-Abhängigkeit (Ignore-Filter, Collection-Sync,
+Dateinamen-Bereinigung, PDF-Signaturprüfung) ist mit `pytest` abgedeckt unter
+`tests/`. Tests laufen vollständig offline mit synthetischen Fixtures – keine
+echten API-Calls, kein Browser, keine Downloads.
+
+```bash
+uv run --project . pytest -v
+```
+
+| Testdatei | Deckt ab |
+|---|---|
+| `test_ignore_logic.py` | `ignore.txt`-Parsing, Datei-/Collection-Filter, Inline-Kommentare |
+| `test_collection_sync.py` | Referenz-Collection-Erkennung, Opt-out-Sync, Idempotenz |
+| `test_ravelry_common.py` | Dateinamen-Bereinigung, PDF-Erkennung, Cookie-Validierung |
+
+Bei jeder Änderung an `ravelry-downloader.py` oder `ravelry_common.py` sollten
+diese Tests vor dem nächsten echten Lauf grün sein – sie fangen Logikfehler
+(z. B. im `ignore.txt`-Parser) ab, ohne dafür die eigene Bibliothek anfassen
+oder PDFs herunterladen zu müssen.
 
 ---
 
@@ -204,6 +237,12 @@ uv run --project . ravelry-downloader.py
 ├── ravelry-test.py          # API-Test: erste PDFs aller Varianten herunterladen
 ├── ravelry-downloader.py    # Vollständiger Bibliotheks-Download
 ├── ravelry.py                # Stash & Projekte als DataFrame
+│
+├── tests/                    # pytest-Suite (offline, keine echten API-Calls)
+│   ├── conftest.py
+│   ├── test_ignore_logic.py
+│   ├── test_collection_sync.py
+│   └── test_ravelry_common.py
 │
 ├── docs/
 │   └── ravelry-api-kb.md   # API-Dokumentation / Knowledge Base
