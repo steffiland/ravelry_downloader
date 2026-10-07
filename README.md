@@ -45,9 +45,22 @@ API-Struktur.
 
 ```bash
 uv run ravelry-test.py
+# oder über die Projekt-Umgebung:
+uv run --project . ravelry-test.py
 ```
 
 Downloads landen in `test_downloads/`.
+
+> **Bekannte Einschränkung:** Nur **kostenlose** Downloads (Variante 1) funktionieren
+> mit den API-Keys. Deren URLs (`/dls/{id}/{code}`) leiten direkt auf eine vorsignierte
+> S3-URL weiter. **Kostenpflichtige** Downloads (Varianten 2–6: Einzelpattern, eBooks,
+> Collections, Bundles) laufen über `/download/{id}/checkout`-URLs, die eine
+> eingeloggte **Browser-Session** verlangen – die REST-API-Keys (Basic Auth gegen
+> `api.ravelry.com`) werden dort nicht akzeptiert, man landet auf der Login-Seite.
+> Das Script gibt den API-Response pro Variante zur Analyse aus, bricht aber mit
+> einem klaren Fehler ab, wenn statt eines PDFs eine HTML-Login-Seite zurückkommt.
+> Für automatisierte Downloads kostenpflichtiger Inhalte wäre ein zusätzlicher
+> Cookie-basierter Login-Flow nötig (nicht Teil dieses Scripts).
 
 ### Vollständiger Bibliotheks-Download (`ravelry-downloader.py`)
 
@@ -62,6 +75,11 @@ Downloads landen in `ravelry_downloads/`.
 Beim ersten Start wird dort `ignore.txt` erstellt – darin können Dateinamen-Fragmente
 eingetragen werden, die übersprungen werden sollen (z. B. `_NL.pdf` für niederländische
 Versionen).
+
+> Gilt dieselbe Einschränkung wie oben: Kostenpflichtige PDFs lassen sich mit reinen
+> API-Keys aktuell **nicht** herunterladen (Redirect auf Login-Seite). Nur kostenlose
+> Ravelry-Downloads werden erfolgreich gespeichert; bei allen anderen protokolliert
+> das Script einen Fehler statt eine ungültige Datei zu schreiben.
 
 ### Stash & Projekte anzeigen (`ravelry.py`)
 

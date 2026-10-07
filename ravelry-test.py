@@ -17,10 +17,27 @@ Varianten:
   2. Kostenpflichtiges Ravelry-Pattern (ravelry_download=true, free=false, in library)
   3. Einzelkauf-Pattern aus der Library (via library/search)
   4. eBook / Volume aus der Library   (volume_attachments)
-  5. Collection / Pattern-Source      (mehrere Pattern in einem Buch/Heft)
-  6. Bundle-Pattern                   (mehrere Patterns gemeinsam gekauft → ravelry_download)
+  5. Collection                       (ein Volume mit patterns_count > 1)
+  6. Bundle                           (mehrere Einzelpattern, gleicher Kauf-Zeitstempel)
 
 Downloads landen in: test_downloads/
+
+WICHTIGE EINSCHRÄNKUNG (kein Bug, sondern Ravelry-Verhalten):
+---------------------------------------------------------------
+Nur KOSTENLOSE Downloads (`/dls/{id}/{code}`-URLs) leiten direkt auf eine
+vorsignierte S3-URL weiter und funktionieren mit den API-Keys (Variante 1).
+
+KOSTENPFLICHTIGE Downloads laufen über `/download/{id}/checkout`-URLs
+(egal ob Einzelpattern, eBook, Collection oder Bundle – Varianten 2-6).
+Diese URLs prüfen eine eingeloggte BROWSER-SESSION (Cookie-Login unter
+www.ravelry.com/account/login) und akzeptieren KEINE Basic-Auth-API-Keys.
+Die REST-API (api.ravelry.com) und der Datei-Download (www.ravelry.com)
+sind zwei getrennte Auth-Systeme.
+
+Für automatisierte Downloads kostenpflichtiger Inhalte braucht man daher
+zusätzlich eine Session-Cookie-Authentifizierung (z.B. Login-Form per
+requests.Session() simulieren, oder Cookies aus einem echten Browser-Login
+exportieren und mitschicken). Das ist NICHT Teil dieses Test-Scripts.
 """
 
 import os
@@ -28,6 +45,7 @@ import json
 import re
 import sys
 import time
+from collections import defaultdict
 import requests
 from dotenv import load_dotenv
 
@@ -161,36 +179,39 @@ else:
 # ══════════════════════════════════════════════════════════════════════════
 section("2 · Kostenpflichtiges Ravelry-Pattern (Library)")
 
-lib_data = get(f"/people/{me}/library/search.json", {
-    "page_size": 100,
-})
+# WICHTIG: library/search.json liefert IMMER "volume"-Objekte zurück – auch
+# für einzeln gekaufte Pattern (Ravelry legt dafür intern ein 1:1-Volume an).
+# Die relevanten Felder sind:
+#   id                 -> Volume-ID (für /volumes/{id}.json)
+#   pattern_id         -> echte Pattern-ID (für /patterns/{id}.json), oder null
+#   pattern_source_id  -> gesetzt bei Collections/Heften, sonst null
+#   patterns_count     -> >1 bedeutet Collection
+#   has_downloads      -> ob überhaupt PDFs hinterlegt sind
+lib_data = get(f"/people/{me}/library/search.json", {"page_size": 100})
 all_volumes = lib_data.get("volumes", [])
-all_patterns_lib = lib_data.get("patterns", [])
 paginator = lib_data.get("paginator", {})
 
-print(f"  Library-Einträge (Seite 1): {len(all_volumes)} Volumes, "
-      f"{len(all_patterns_lib)} Patterns")
-print(f"  Paginierung: {paginator}")
+print(f"  Library-Einträge (Seite 1): {len(all_volumes)} Volumes "
+      f"(gesamt: {paginator.get('results')})")
 
-# Unter den volumes: welche haben KEINE volume_attachments?
-# Das könnten Einzelpattern-Wrapper sein → Pattern-Details prüfen
+# Einzelpattern = patterns_count == 1 UND pattern_id gesetzt
 paid_pattern_found = False
 for item in all_volumes:
-    if item.get("volume_attachments"):
-        continue  # das ist ein echtes Volume → Variante 4
-    pid = item.get("id")
-    if not pid:
-        continue
+    pid = item.get("pattern_id")
+    if not pid or item.get("patterns_count", 1) != 1:
+        continue  # keine Einzelpattern-Entry (sondern Collection o.ä.)
 
     detail = get(f"/patterns/{pid}.json").get("pattern", {})
-    if not detail.get("ravelry_download"):
-        continue
+    if not detail.get("ravelry_download") or detail.get("free"):
+        continue  # wir suchen explizit ein KOSTENPFLICHTIGES Pattern
 
     name = detail.get("name", f"pattern_{pid}")
-    print(f"  Pattern: {name!r}  (ID {pid})")
+    print(f"  Pattern: {name!r}  (Pattern-ID {pid}, Volume-ID {item.get('id')})")
     dump("Pattern-Felder (Auszug)", {
         "ravelry_download": detail.get("ravelry_download"),
         "free": detail.get("free"),
+        "pdf_in_library": detail.get("pdf_in_library"),
+        "volumes_in_library": detail.get("volumes_in_library"),
         "download_location": detail.get("download_location"),
     })
 
@@ -210,8 +231,7 @@ for item in all_volumes:
 
 if not paid_pattern_found:
     result("Variante 2", False,
-           "Kein kostenpflichtiges Einzelpattern in der Library gefunden\n"
-           "   (alle Library-Einträge sind Volumes oder haben keine ravelry_download-Flag).")
+           "Kein kostenpflichtiges Einzelpattern in der Library gefunden.")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -219,36 +239,30 @@ if not paid_pattern_found:
 # ══════════════════════════════════════════════════════════════════════════
 section("3 · Erster Library-Eintrag überhaupt (library/search ohne Filter)")
 
-# Wir schauen was als allererstes kommt, und zeigen alle Felder
-first_item = (all_volumes + all_patterns_lib)[0] if (all_volumes or all_patterns_lib) else None
+# Die Summary-Objekte aus library/search enthalten KEINE volume_attachments –
+# die stecken erst in den Details unter /volumes/{id}.json.
+first_item = all_volumes[0] if all_volumes else None
 
 if not first_item:
     result("Variante 3", False, "Library ist leer.")
 else:
-    print(f"  Typ-Erkennung (Keys): {list(first_item.keys())}")
-    dump("Erster Library-Eintrag (komplett)", first_item)
+    print(f"  Summary-Keys: {list(first_item.keys())}")
+    dump("Erster Library-Eintrag (Summary)", first_item)
 
-    # Versuchen, irgendwie an eine URL zu kommen
-    url = None
+    vol_id = first_item.get("id")
+    vol_detail = get(f"/volumes/{vol_id}.json").get("volume", {})
+    attachments = vol_detail.get("volume_attachments", [])
+    dump("Volume-Details: volume_attachments (Dateinamen)",
+         [a.get("filename") for a in attachments])
 
-    # a) Hat volume_attachments?
-    for att in first_item.get("volume_attachments", []):
-        if att.get("ravelry_download_url"):
-            url = att["ravelry_download_url"]
-            filename = att.get("filename", f"03_library_{first_item.get('id')}.pdf")
-            break
-
-    # b) Hat download_location?
-    if not url:
-        loc = first_item.get("download_location")
-        if isinstance(loc, dict):
-            loc = [loc]
-        url = next((l["url"] for l in (loc or []) if l.get("url")), None)
-        if url:
-            filename = f"03_library_{sanitize(first_item.get('title', str(first_item.get('id'))))}.pdf"
+    url, filename = None, None
+    if attachments:
+        att = attachments[0]
+        url = att.get("ravelry_download_url")
+        filename = att.get("filename") or f"03_library_{vol_id}.pdf"
 
     if url:
-        ok, msg = save_pdf(url, filename)
+        ok, msg = save_pdf(url, f"03_library_{sanitize(filename)}")
         result("Variante 3 – Library-Eintrag", ok, msg)
     else:
         result("Variante 3", False, "Keine Download-URL in diesem Eintrag gefunden.")
@@ -300,157 +314,100 @@ else:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# VARIANTE 5 – Collection / Pattern-Source (mehrere Pattern in einem Heft)
+# VARIANTE 5 – Collection (mehrere Pattern in einem Heft/eBook, eigene Library)
 # ══════════════════════════════════════════════════════════════════════════
-section("5 · Collection / Pattern-Source (pattern_sources/search)")
+section("5 · Collection (patterns_count > 1, eigene Library)")
 
-ps_data = get("/pattern_sources/search.json", {
-    "query": "",
-    "page_size": 5,
-    "availability": "ravelry",   # nur Ravelry-Downloads
-})
-sources = ps_data.get("pattern_sources", [])
-print(f"  Pattern-Sources gefunden: {len(sources)}")
+# Eine Collection erkennt man in der eigenen Library an patterns_count > 1
+# UND has_downloads=True. pattern_sources/search.json liefert zwar Collections,
+# aber KEIN volume_id-Feld – also nicht direkt mit einem eigenen PDF verknüpft.
+# Deshalb: über die eigene Library suchen (dort ist der Download garantiert).
+collection_item = next(
+    (v for v in all_volumes
+     if v.get("patterns_count", 1) > 1 and v.get("has_downloads")),
+    None,
+)
 
-collection_done = False
-for src in sources:
-    src_id   = src.get("id")
-    src_name = src.get("name", f"source_{src_id}")
-    print(f"  Prüfe Source: {src_name!r}  (ID {src_id})")
+if not collection_item:
+    result("Variante 5", False,
+           "Keine Collection (patterns_count>1) mit Downloads in der Library gefunden.")
+else:
+    vol_id = collection_item.get("id")
+    title  = collection_item.get("title", f"Collection_{vol_id}")
+    print(f"  Collection: {title!r}  (Volume-ID {vol_id}, "
+          f"{collection_item.get('patterns_count')} Patterns)")
 
-    src_detail = get(f"/pattern_sources/{src_id}.json").get("pattern_source", {})
-    dump("Source-Felder (Auszug)", {
-        "id": src_detail.get("id"),
-        "name": src_detail.get("name"),
-        "volume_id": src_detail.get("volume_id"),
-        "free": src_detail.get("free"),
-        "ravelry_download": src_detail.get("ravelry_download"),
-    })
+    vol_detail  = get(f"/volumes/{vol_id}.json").get("volume", {})
+    attachments = vol_detail.get("volume_attachments", [])
+    dump("Collection-Attachments (Dateinamen)",
+         [a.get("filename") for a in attachments])
 
-    vol_id = src_detail.get("volume_id")
-    if vol_id:
-        vol_detail = get(f"/volumes/{vol_id}.json").get("volume", {})
-        attachments = vol_detail.get("volume_attachments", [])
-        if attachments:
-            att = attachments[0]
-            url = att.get("ravelry_download_url")
-            filename = att.get("filename") or f"05_collection_{sanitize(src_name)}.pdf"
-            if url:
-                ok, msg = save_pdf(url, f"05_collection_{sanitize(filename)}")
-                result("Variante 5 – Collection (via Volume)", ok, msg)
-                collection_done = True
-                time.sleep(0.3)
-                break
-
-if not collection_done:
-    # Fallback: erstes Pattern aus einer öffentlichen Collection laden
-    coll_data = get("/patterns/search.json", {
-        "availability": "ravelry",
-        "page_size": 1,
-        "sort": "favorites",
-    })
-    coll_patterns = coll_data.get("patterns", [])
-    if coll_patterns:
-        pid    = coll_patterns[0]["id"]
-        detail = get(f"/patterns/{pid}.json")["pattern"]
-        name   = detail.get("name", f"pattern_{pid}")
-        src    = detail.get("pattern_source", {})
-        print(f"\n  Fallback-Pattern: {name!r}, Quelle: {src.get('name')!r}")
-        dump("Pattern Volumes/Download", {
-            "pdf_in_library": detail.get("pdf_in_library"),
-            "volumes_in_library": detail.get("volumes_in_library"),
-            "ravelry_download": detail.get("ravelry_download"),
-            "download_location": detail.get("download_location"),
-        })
-        result("Variante 5", False,
-               "Keine Collection-PDF im eigenen Account → Felder ausgegeben.")
+    if not attachments:
+        result("Variante 5", False, "Collection-Volume hat keine PDF-Anhänge.")
     else:
-        result("Variante 5", False, "Keine Collection-Pattern gefunden.")
+        att = attachments[0]
+        url = att.get("ravelry_download_url")
+        filename = att.get("filename") or f"05_collection_{sanitize(title)}.pdf"
+        if url:
+            ok, msg = save_pdf(url, f"05_collection_{sanitize(filename)}")
+            result("Variante 5 – Collection", ok, msg)
+        else:
+            result("Variante 5", False, "ravelry_download_url fehlt in attachment.")
+    time.sleep(0.3)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# VARIANTE 6 – Bundle (mehrere Pattern zusammen gekauft)
+# VARIANTE 6 – Bundle (mehrere Einzelpattern gemeinsam gekauft)
 # ══════════════════════════════════════════════════════════════════════════
-section("6 · Bundle (mehrere Pattern gemeinsam in Library)")
+section("6 · Bundle (mehrere Einzelpattern im selben Kauf)")
 
-# Bundles sind auf Ravelry Favoriten-Sammlungen ODER
-# Designer-Pakete. Beim Kauf landen Einzel-PDFs in der Library.
-# Wir schauen, ob die Library mehrere Einträge hat, die zusammengehören
-# (gleicher pattern_source / gleicher volume_id).
-
-bundle_done = False
-
-# Alle Library-Einträge holen (bis zu 3 Seiten)
+# Ein Bundle-Kauf (z.B. Designer-Paket mit mehreren Patterns) erzeugt pro
+# Pattern ein EIGENES Volume mit eigener pattern_id, aber alle mit demselben
+# created_at-Zeitstempel (= derselbe Checkout). patterns_count ist bei jedem
+# einzelnen Eintrag 1 – das unterscheidet es von einer "Collection"
+# (Variante 5, EIN Volume mit patterns_count > 1).
 all_lib = []
-for pg in range(1, 4):
+for pg in range(1, 10):
     page_data = get(f"/people/{me}/library/search.json", {"page_size": 100, "page": pg})
-    batch = page_data.get("volumes", []) + page_data.get("patterns", [])
-    all_lib.extend(batch)
+    all_lib.extend(page_data.get("volumes", []))
     if pg >= page_data.get("paginator", {}).get("page_count", 1):
         break
 
-# Pattern-Source-ID aus jedem Eintrag extrahieren
-from collections import defaultdict
-by_source: dict = defaultdict(list)
+by_timestamp: dict = defaultdict(list)
 for item in all_lib:
-    src_id = (item.get("pattern_source") or {}).get("id")
-    if src_id:
-        by_source[src_id].append(item)
+    if item.get("pattern_id") and item.get("patterns_count", 1) == 1:
+        by_timestamp[item.get("created_at")].append(item)
 
-# Eine Source mit >1 Einträgen = Bundle-Kandidat
-bundle_src_id = next((sid for sid, items in by_source.items() if len(items) > 1), None)
+bundle_group = next((items for items in by_timestamp.values() if len(items) > 1), None)
 
-if bundle_src_id:
-    bundle_items = by_source[bundle_src_id]
-    src_name = (bundle_items[0].get("pattern_source") or {}).get("name", str(bundle_src_id))
-    print(f"  Bundle gefunden: {src_name!r}  ({len(bundle_items)} Einträge)")
-
-    for item in bundle_items[:3]:  # max. 3 zeigen
-        item_id    = item.get("id")
-        item_title = item.get("title") or item.get("name", str(item_id))
-        attachments = item.get("volume_attachments", [])
-
-        if attachments:
-            att = attachments[0]
-            url = att.get("ravelry_download_url")
-            filename = att.get("filename") or f"06_bundle_{sanitize(item_title)}.pdf"
-            if url:
-                ok, msg = save_pdf(url, f"06_bundle_{sanitize(filename)}")
-                result(f"Variante 6 – Bundle-Teil: {item_title!r}", ok, msg)
-                bundle_done = True
-                time.sleep(0.3)
-                break
-        else:
-            # Kein Attachment → als Pattern-Download probieren
-            detail = get(f"/patterns/{item_id}.json").get("pattern", {})
-            if detail.get("ravelry_download"):
-                loc = detail.get("download_location")
-                if isinstance(loc, dict):
-                    loc = [loc]
-                url = next((l["url"] for l in (loc or []) if l.get("url")), None)
-                if url:
-                    name = detail.get("name", str(item_id))
-                    ok, msg = save_pdf(url, f"06_bundle_{sanitize(name)}.pdf")
-                    result(f"Variante 6 – Bundle-Teil: {name!r}", ok, msg)
-                    bundle_done = True
-                    time.sleep(0.3)
-                    break
-
-if not bundle_done:
-    # Fallback: User-eigene Bundles (Favoriten-Sammlungen)
-    bundles_data = get(f"/people/{me}/bundles/list.json")
-    bundles = bundles_data.get("bundles", [])
-    print(f"\n  User-Bundles (Favoriten-Sammlungen): {len(bundles)}")
-    if bundles:
-        b = bundles[0]
-        dump("Erstes User-Bundle", {
-            "id": b.get("id"),
-            "title": b.get("title"),
-            "count": b.get("count"),
-        })
+if not bundle_group:
     result("Variante 6", False,
-           "Kein Download-Bundle in Library gefunden.\n"
-           "   (Bundles sind Designer-Pakete; beim Kauf → Einzelpatterns in Library)")
+           "Keine Gruppe von Einzelpattern mit identischem Kauf-Zeitstempel gefunden.")
+else:
+    print(f"  Bundle gefunden: {len(bundle_group)} Pattern mit Zeitstempel "
+          f"{bundle_group[0].get('created_at')}")
+    dump("Bundle-Mitglieder", [
+        {"title": it.get("title"), "pattern_id": it.get("pattern_id")}
+        for it in bundle_group
+    ])
+
+    first = bundle_group[0]
+    vol_id = first.get("id")
+    vol_detail = get(f"/volumes/{vol_id}.json").get("volume", {})
+    attachments = vol_detail.get("volume_attachments", [])
+
+    url, filename = None, None
+    if attachments:
+        att = attachments[0]
+        url = att.get("ravelry_download_url")
+        filename = att.get("filename") or f"06_bundle_{sanitize(first.get('title', str(vol_id)))}.pdf"
+
+    if url:
+        ok, msg = save_pdf(url, f"06_bundle_{sanitize(filename)}")
+        result(f"Variante 6 – Bundle-Teil: {first.get('title')!r}", ok, msg)
+    else:
+        result("Variante 6", False, "Erstes Bundle-Pattern hat keinen PDF-Anhang.")
+    time.sleep(0.3)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -462,3 +419,9 @@ for f in sorted(os.listdir(TEST_DIR)):
     size = os.path.getsize(os.path.join(TEST_DIR, f)) // 1024
     print(f"    {f}  ({size} KB)")
 print('═' * 60)
+print(
+    "\nHinweis: Varianten 2–6 (kostenpflichtig) scheitern bei den meisten\n"
+    "Accounts mit 'text/html' statt PDF, weil /download/{id}/checkout eine\n"
+    "eingeloggte Browser-Session statt API-Keys erwartet. Siehe Docstring\n"
+    "am Dateianfang für Details."
+)
