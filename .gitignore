@@ -11,5 +11,13 @@ wheels/
 .venv
 .env*
 
-# Ravelry Browser-Session (enthält Login-Cookies!)
 .ravelry_session.json
+ravelry_downloads
+
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+key
+key.pub
