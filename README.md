@@ -87,6 +87,32 @@ Beim ersten Start wird dort `ignore.txt` erstellt – darin können Dateinamen-F
 eingetragen werden, die übersprungen werden sollen (z. B. `_NL.pdf` für niederländische
 Versionen).
 
+Der Downloader verarbeitet drei Arten von Library-Einträgen:
+
+1. **eBooks/Collections mit eigenem PDF-Bundle** (`type=pdf`-Volumes)
+2. **Einzeln gekaufte Pattern** (eigenes 1:1-Volume pro Pattern)
+3. **Referenz-Collections** – Collections, die selbst KEIN PDF-Bundle haben,
+   sondern nur auf mehrere einzeln verlinkte Pattern verweisen (z. B.
+   Yarn-Hersteller-Sammlungen wie Scheepjes „YARN – The After Party", aber auch
+   alte Zeitschriften-Ausgaben, die man z. B. nur zur Recherche in die Library
+   aufgenommen hat, ohne sie bei Ravelry gekauft zu haben)
+
+> **Variante 3 (Referenz-Collections) nutzt einen Opt-out-Mechanismus:**
+> Bei jedem Lauf trägt das Script neu gefundene Referenz-Collections automatisch
+> als `collection:<id>  # <Titel> (<n> Pattern)` in `ignore.txt` ein – sie werden
+> also standardmäßig **nicht** herunterladen. Willst du eine bestimmte Collection
+> doch laden (z. B. weil sie wie „YARN – The After Party" tatsächlich kostenlose
+> Ravelry-Downloads enthält), lösche einfach ihre Zeile aus `ignore.txt`.
+> Welche IDs bereits automatisch eingetragen wurden, merkt sich das Script in
+> `ravelry_downloads/.collection_sync.json` – eine von dir gelöschte Zeile wird
+> dadurch beim nächsten Lauf **nicht** wieder automatisch hinzugefügt.
+>
+> Das ist besonders relevant, wenn Patterns/Zeitschriften, die man anderweitig
+> gekauft und nur zu Recherchezwecken in die Library aufgenommen hat (um Ravelry
+> als durchsuchbare "Single Source of Truth" für die eigene Mustersammlung zu
+> nutzen), nicht versehentlich zu hunderten API-Calls für nicht-downloadbare
+> Inhalte führen sollen.
+
 > ⚠️ Bei einer großen Bibliothek (hunderte Einträge, teils zweistellige MB pro PDF)
 > kann ein kompletter Lauf viel Speicherplatz brauchen. Unter WSL wächst die virtuelle
 > Festplatte (VHDX) dabei dynamisch mit und schrumpft nach dem Löschen der Dateien
