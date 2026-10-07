@@ -70,7 +70,52 @@ def _is_pdf_response(content_type: str, first_chunk: bytes) -> bool:
     return first_chunk.startswith(b"%PDF-") or "pdf" in content_type.lower()
 
 
-def download_pdf(url: str, target_path: str, cookies: dict | None = None) -> tuple[bool, str]:
+# Direkte Datei-Download-Links auf einer Ravelry-"Datei wählen"-Zwischenseite,
+# z.B. <a href="https://www.ravelry.com/dl/scheepjes/827394?filename=....pdf">
+_DL_LINK_RE = re.compile(r'href="(https?://www\.ravelry\.com/dl/[^"]+)"')
+
+
+def _extract_file_chooser_url(html: str) -> str | None:
+    """
+    Extrahiert eine Direkt-Download-URL aus einer Ravelry-"Datei wählen"-
+    Zwischenseite.
+
+    Hintergrund: `download_location.url` (bzw. die daraus abgeleitete
+    `/dls/{id}/{code}`-URL) liefert bei einem Pattern mit NUR EINER Datei
+    direkt das PDF. Hat das Pattern aber mehrere Dateien (typischerweise
+    Übersetzungen/Sprachvarianten – sehr häufig bei Referenz-Collections wie
+    Scheepjes "YARN - The After Party"), liefert dieselbe URL stattdessen eine
+    HTML-Seite mit je einem `/dl/{company}/{id}?filename=...`-Link pro Datei.
+    Das sieht für die Content-Type-Prüfung wie eine fehlgeschlagene
+    Login-Weiterleitung aus, ist aber eine normale Zwischenseite und braucht
+    KEINEN Login – die Links sind auch ohne Session sichtbar.
+
+    Bevorzugt wird eine Datei, deren Dateiname auf Englisch hindeutet (US/UK/
+    ENGLISH), sonst wird einfach die erste gefundene Datei genommen. Gibt
+    None zurück, wenn die Seite keine solchen Links enthält (z.B. eine
+    echte Login-Seite).
+    """
+    links = []
+    for link in _DL_LINK_RE.findall(html):
+        link = link.replace("&amp;", "&").replace("http://", "https://", 1)
+        if link not in links:
+            links.append(link)
+    if not links:
+        return None
+
+    for link in links:
+        filename = link.rsplit("filename=", 1)[-1].upper()
+        if any(tag in filename for tag in ("_US_", "_UK_", "ENGLISH")):
+            return link
+    return links[0]
+
+
+def download_pdf(
+    url: str,
+    target_path: str,
+    cookies: dict | None = None,
+    _follow_chooser: bool = True,
+) -> tuple[bool, str]:
     """
     Lädt eine Datei von url nach target_path herunter und validiert, dass es
     sich um ein PDF handelt (Signatur-Check + Content-Type).
@@ -78,6 +123,10 @@ def download_pdf(url: str, target_path: str, cookies: dict | None = None) -> tup
     cookies: optionale Browser-Session-Cookies (für kostenpflichtige
     Downloads, die /account/login statt eines PDFs liefern würden ohne
     gültige Session – siehe ensure_browser_login()).
+
+    _follow_chooser: intern genutzt, um EINMALIG einer Ravelry-"Datei
+    wählen"-Zwischenseite zu folgen (siehe _extract_file_chooser_url). Nicht
+    von außen setzen.
 
     Gibt (True, infotext) oder (False, fehlertext) zurück.
     """
@@ -94,6 +143,14 @@ def download_pdf(url: str, target_path: str, cookies: dict | None = None) -> tup
 
         content_type = r.headers.get("Content-Type", "")
         if not _is_pdf_response(content_type, first):
+            if _follow_chooser and "html" in content_type.lower():
+                body = first + b"".join(chunks)
+                html = body.decode("utf-8", errors="ignore")
+                chooser_url = _extract_file_chooser_url(html)
+                if chooser_url:
+                    return download_pdf(
+                        chooser_url, target_path, cookies=cookies, _follow_chooser=False
+                    )
             preview = first[:200].decode("utf-8", errors="ignore")
             return False, f"Kein PDF (Content-Type: {content_type})\n    Vorschau: {preview!r}"
 

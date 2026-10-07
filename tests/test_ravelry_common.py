@@ -65,6 +65,54 @@ class TestCookiesLookValid:
         assert rc._cookies_look_valid(cookies) is False
 
 
+class TestExtractFileChooserUrl:
+    """
+    Für Pattern mit mehreren Dateien (z.B. Sprachvarianten) liefert
+    `/dls/{id}/{code}` keine PDF-Signatur, sondern eine HTML-"Datei
+    wählen"-Zwischenseite mit `/dl/{company}/{id}?filename=...`-Links – auch
+    OHNE Login-Problem. download_pdf() muss diese Seite erkennen und einem
+    passenden Link folgen, statt sie als Login-Fehler zu behandeln.
+    """
+
+    def test_returns_none_for_real_login_page(self):
+        html = '<html><body>Please <a href="/account/login">log in</a></body></html>'
+        assert rc._extract_file_chooser_url(html) is None
+
+    def test_extracts_single_dl_link(self):
+        html = (
+            '<a href="https://www.ravelry.com/dl/scheepjes/827389'
+            '?filename=30.__DUTCH__Alto_Mare_Wrap.pdf">30.__DUTCH__Alto_Mare_Wrap.pdf</a>'
+        )
+        assert rc._extract_file_chooser_url(html) == (
+            "https://www.ravelry.com/dl/scheepjes/827389"
+            "?filename=30.__DUTCH__Alto_Mare_Wrap.pdf"
+        )
+
+    def test_prefers_us_variant_among_multiple_languages(self):
+        html = "".join(
+            f'<a href="https://www.ravelry.com/dl/scheepjes/{code}'
+            f'?filename=30.__{lang}__Alto_Mare_Wrap.pdf">x</a>'
+            for code, lang in [
+                (827389, "DUTCH"),
+                (827390, "FRENCH"),
+                (827394, "US"),
+            ]
+        )
+        assert rc._extract_file_chooser_url(html) == (
+            "https://www.ravelry.com/dl/scheepjes/827394"
+            "?filename=30.__US__Alto_Mare_Wrap.pdf"
+        )
+
+    def test_normalizes_http_scheme_to_https(self):
+        html = (
+            '<a href="http://www.ravelry.com/dl/scheepjes/827389'
+            '?filename=file.pdf">x</a>'
+        )
+        assert rc._extract_file_chooser_url(html) == (
+            "https://www.ravelry.com/dl/scheepjes/827389?filename=file.pdf"
+        )
+
+
 class TestCookiesToRequestsDict:
     def test_filters_to_ravelry_domain_only(self):
         cookies = [
