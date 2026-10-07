@@ -9,6 +9,8 @@ Python-Scripts zum Herunterladen von Patterns und PDFs aus dem eigenen Ravelry-A
 - [uv](https://docs.astral.sh/uv/) installiert (`uv 0.12+`)
 - Python 3.12 (wird von uv automatisch verwaltet)
 - Ravelry-Account mit [Pro/Developer-Zugang](https://www.ravelry.com/pro/developer)
+- Für Browser-Login (kostenpflichtige Downloads, siehe unten): Playwright-Browser
+  einmalig installieren (siehe Setup Schritt 3)
 
 ---
 
@@ -29,19 +31,37 @@ RAVELRY_PERSONAL_KEY=dein_personal_key
 
 Die `.env` liegt im Projektroot und ist über `.gitignore` vom Commit ausgeschlossen.
 
+### 3. Playwright-Browser installieren (einmalig)
+
+Für Downloads kostenpflichtiger Inhalte wird ein echter Browser-Login benötigt
+(Details siehe Abschnitt „Browser-Login" unten). Dafür einmalig die
+Chromium-Binaries von Playwright installieren:
+
+```bash
+uv run --project . python3 -m playwright install chromium
+```
+
+Unter WSL/Linux werden ggf. zusätzliche System-Bibliotheken benötigt
+(Audio/Mesa/Font/X11), die der Browser zum headful-Start braucht:
+
+```bash
+sudo uv run --project . python3 -m playwright install-deps chromium
+```
+
 ---
 
 ## Scripts ausführen
 
 Alle Scripts sind **selbstständig ausführbar** mit `uv run` – sie deklarieren ihre
 Abhängigkeiten im Datei-Header (`# /// script`), uv installiert diese automatisch
-in ein temporäres Venv.
+in ein temporäres Venv. Gemeinsame Logik (API-Zugriff, Downloads, Browser-Login)
+liegt in `ravelry_common.py`, das von allen Scripts importiert wird.
 
 ### Download-Test (`ravelry-test.py`)
 
-Testet alle Pattern-Varianten (kostenlos, kostenpflichtig, eBook, Collection, Bundle)
-und lädt jeweils das erste Exemplar herunter. Nützlich zum Debuggen und Erkunden der
-API-Struktur.
+Testet alle Pattern-Varianten (kostenlos, kostenpflichtig, Einzelkauf, eBook,
+Collection, Bundle) und lädt jeweils das erste Exemplar herunter. Nützlich zum
+Debuggen und Erkunden der API-Struktur.
 
 ```bash
 uv run ravelry-test.py
@@ -51,24 +71,15 @@ uv run --project . ravelry-test.py
 
 Downloads landen in `test_downloads/`.
 
-> **Bekannte Einschränkung:** Nur **kostenlose** Downloads (Variante 1) funktionieren
-> mit den API-Keys. Deren URLs (`/dls/{id}/{code}`) leiten direkt auf eine vorsignierte
-> S3-URL weiter. **Kostenpflichtige** Downloads (Varianten 2–6: Einzelpattern, eBooks,
-> Collections, Bundles) laufen über `/download/{id}/checkout`-URLs, die eine
-> eingeloggte **Browser-Session** verlangen – die REST-API-Keys (Basic Auth gegen
-> `api.ravelry.com`) werden dort nicht akzeptiert, man landet auf der Login-Seite.
-> Das Script gibt den API-Response pro Variante zur Analyse aus, bricht aber mit
-> einem klaren Fehler ab, wenn statt eines PDFs eine HTML-Login-Seite zurückkommt.
-> Für automatisierte Downloads kostenpflichtiger Inhalte wäre ein zusätzlicher
-> Cookie-basierter Login-Flow nötig (nicht Teil dieses Scripts).
-
 ### Vollständiger Bibliotheks-Download (`ravelry-downloader.py`)
 
-Lädt alle PDFs aus der eigenen Ravelry-Bibliothek herunter (Volumes + Einzelpattern),
-mit Skip-Logik für bereits vorhandene Dateien.
+Lädt alle PDFs aus der eigenen Ravelry-Bibliothek herunter (eBooks/Collections +
+Einzelpattern), mit Skip-Logik für bereits vorhandene Dateien.
 
 ```bash
 uv run ravelry-downloader.py
+# oder über die Projekt-Umgebung:
+uv run --project . ravelry-downloader.py
 ```
 
 Downloads landen in `ravelry_downloads/`.  
@@ -76,10 +87,11 @@ Beim ersten Start wird dort `ignore.txt` erstellt – darin können Dateinamen-F
 eingetragen werden, die übersprungen werden sollen (z. B. `_NL.pdf` für niederländische
 Versionen).
 
-> Gilt dieselbe Einschränkung wie oben: Kostenpflichtige PDFs lassen sich mit reinen
-> API-Keys aktuell **nicht** herunterladen (Redirect auf Login-Seite). Nur kostenlose
-> Ravelry-Downloads werden erfolgreich gespeichert; bei allen anderen protokolliert
-> das Script einen Fehler statt eine ungültige Datei zu schreiben.
+> ⚠️ Bei einer großen Bibliothek (hunderte Einträge, teils zweistellige MB pro PDF)
+> kann ein kompletter Lauf viel Speicherplatz brauchen. Unter WSL wächst die virtuelle
+> Festplatte (VHDX) dabei dynamisch mit und schrumpft nach dem Löschen der Dateien
+> **nicht automatisch** wieder. Bei Bedarf: `wsl --manage <Distro> --compact`
+> (Windows 11) oder `diskpart` + `compact vdisk`.
 
 ### Stash & Projekte anzeigen (`ravelry.py`)
 
@@ -88,6 +100,48 @@ Gibt eine Pandas-Übersicht der eigenen Projekte und Garnvorräte aus.
 ```bash
 uv run ravelry.py
 ```
+
+---
+
+## Browser-Login (für kostenpflichtige Downloads)
+
+Ravelry trennt zwei Auth-Systeme:
+
+- **REST-API** (`api.ravelry.com`): Basic Auth mit den API-Keys aus `.env`.
+  Funktioniert für alle `GET`-Abfragen und für **kostenlose** Pattern-Downloads
+  (`/dls/{id}/{code}`-URLs leiten direkt auf eine vorsignierte S3-URL weiter).
+- **Datei-Download** (`www.ravelry.com`): Für **alle anderen** PDFs (gekaufte
+  Einzelpattern, eBooks, Collections, Bundle-Teile) wird eine eingeloggte
+  **Browser-Session** (Cookie-Login) verlangt. Die API-Keys werden hier nicht
+  akzeptiert – ohne gültige Session landet man auf der Login-Seite statt beim PDF.
+
+Beide Scripts (`ravelry-test.py`, `ravelry-downloader.py`) behandeln das automatisch:
+
+1. Ein Download-Versuch liefert HTML (Login-Seite) statt eines PDFs.
+2. Das Script öffnet daraufhin automatisch ein **sichtbares** Chromium-Fenster
+   (Playwright) mit der Ravelry-Login-Seite.
+3. Du loggst dich dort **manuell** ein (Username/Passwort, ggf. 2FA) – das Script
+   wartet bis zu 5 Minuten darauf.
+4. Nach erfolgreichem Login werden die Session-Cookies lokal gespeichert
+   (`.ravelry_session.json`) und für alle weiteren Downloads in diesem **und
+   folgenden** Läufen wiederverwendet, bis die Session abläuft.
+
+```python
+# ravelry_common.py – zentrale Funktion
+ensure_browser_login(force: bool = False) -> dict  # gibt Cookies als dict zurück
+clear_browser_session()                            # löscht die gespeicherte Session
+```
+
+> 🔒 `.ravelry_session.json` enthält Login-Cookies und ist über `.gitignore`
+> vom Commit ausgeschlossen. Niemals teilen oder committen!
+
+**Troubleshooting Login:**
+- Browser öffnet sich nicht / Fehler beim Start → Playwright-Browser + System-Deps
+  installieren (siehe Setup Schritt 3).
+- Login hängt / Timeout nach 5 Minuten → Script erneut starten, ggf.
+  `.ravelry_session.json` vorher löschen.
+- Nach Passwortänderung schlagen Downloads plötzlich fehl → alte Session ist
+  ungültig; `.ravelry_session.json` löschen, nächster Lauf fragt neu nach Login.
 
 ---
 
@@ -105,7 +159,8 @@ uv run --project . ravelry-downloader.py
 
 > Unterschied: `uv run script.py` (ohne `--project`) nutzt ein isoliertes Wegwerf-Venv
 > aus dem Script-Header. `uv run --project .` nutzt das persistente Projekt-Venv aus
-> `pyproject.toml` – sinnvoll wenn zusätzliche Pakete lokal installiert sind.
+> `pyproject.toml` – sinnvoll wenn zusätzliche Pakete lokal installiert sind oder wenn
+> Playwright-Browser-Binaries bereits für dieses Venv installiert wurden.
 
 ---
 
@@ -113,21 +168,23 @@ uv run --project . ravelry-downloader.py
 
 ```
 .
-├── .env                    # API-Keys (nicht committen!)
-├── .python-version         # Python 3.12 (für uv)
-├── pyproject.toml          # Projektdefinition
-├── uv.lock                 # Gesperrte Abhängigkeiten
+├── .env                     # API-Keys (nicht committen!)
+├── .ravelry_session.json    # Browser-Login-Cookies (wird erzeugt, nicht committen!)
+├── .python-version          # Python 3.12 (für uv)
+├── pyproject.toml           # Projektdefinition
+├── uv.lock                  # Gesperrte Abhängigkeiten
 │
-├── ravelry-test.py         # API-Test: erste PDFs aller Varianten herunterladen
-├── ravelry-downloader.py   # Vollständiger Bibliotheks-Download
-├── ravelry.py              # Stash & Projekte als DataFrame
+├── ravelry_common.py        # Gemeinsamer Helper: API, Downloads, Browser-Login
+├── ravelry-test.py          # API-Test: erste PDFs aller Varianten herunterladen
+├── ravelry-downloader.py    # Vollständiger Bibliotheks-Download
+├── ravelry.py                # Stash & Projekte als DataFrame
 │
 ├── docs/
-│   └── ravelry-api-kb.md  # API-Dokumentation / Knowledge Base
+│   └── ravelry-api-kb.md   # API-Dokumentation / Knowledge Base
 │
-├── ravelry_downloads/      # Zielordner Downloader (wird angelegt)
-│   └── ignore.txt          # Ausschlussliste (wird beim ersten Start angelegt)
-└── test_downloads/         # Zielordner Test-Script (wird angelegt)
+├── ravelry_downloads/       # Zielordner Downloader (wird angelegt)
+│   └── ignore.txt           # Ausschlussliste (wird beim ersten Start angelegt)
+└── test_downloads/          # Zielordner Test-Script (wird angelegt)
 ```
 
 ---
@@ -139,4 +196,7 @@ uv run --project . ravelry-downloader.py
 | `pyenv: version '3.12' is not installed` | `uv python install 3.12` |
 | `401 Unauthorized` | Keys in `.env` prüfen; Personal Key ≠ Password |
 | Download ergibt kein PDF | API-Response wird im Terminal ausgegeben – `Content-Type` und Vorschau prüfen |
+| `symbol lookup error` beim Browser-Start | System-Deps fehlen: `sudo uv run --project . python3 -m playwright install-deps chromium` |
+| Browser startet, aber kein Fenster sichtbar | Unter WSL: WSLg muss aktiv sein (`echo $DISPLAY` sollte `:0` o.ä. zeigen) |
+| Login-Timeout nach 5 Minuten | Script neu starten; bei dauerhaften Problemen `.ravelry_session.json` löschen |
 | `SSL`-Fehler | `uv run --no-verify-ssl ravelry-downloader.py` (Firmen-Proxy) |

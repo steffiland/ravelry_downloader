@@ -3,6 +3,7 @@
 # dependencies = [
 #   "requests",
 #   "python-dotenv",
+#   "playwright",
 # ]
 # ///
 
@@ -18,46 +19,39 @@ Lädt alle PDFs aus der eigenen Ravelry-Bibliothek herunter:
      → library/search.json (ohne type) → patterns[].download_location[].url (type="ravelry")
 
 Ausschlüsse via ravelry_downloads/ignore.txt (Zeilen = Substring-Filter gegen Dateinamen).
+
+KOSTENPFLICHTIGE DOWNLOADS:
+----------------------------
+Deren URLs verlangen eine eingeloggte Browser-Session statt der REST-API-Keys.
+Liefert ein Download-Versuch eine HTML-Login-Seite statt eines PDFs, öffnet
+dieses Script automatisch einen sichtbaren Browser (Playwright) zum manuellen
+Einloggen – siehe ravelry_common.ensure_browser_login(). Die Session wird
+danach lokal zwischengespeichert (.ravelry_session.json), sodass spätere
+Läufe nicht erneut einloggen müssen.
 """
 
 import os
-import re
 import time
-import requests
-from dotenv import load_dotenv
 
-# .env laden
-load_dotenv()
+from ravelry_common import (
+    api_get,
+    download_with_login_fallback,
+    get_current_username,
+    sanitize_filename,
+)
 
-ACCESS_KEY  = os.getenv("RAVELRY_ACCESS_KEY")
-PERSONAL_KEY = os.getenv("RAVELRY_PERSONAL_KEY")
-
-if not ACCESS_KEY or not PERSONAL_KEY:
-    raise ValueError(
-        "Fehler: RAVELRY_ACCESS_KEY oder RAVELRY_PERSONAL_KEY fehlt in der .env-Datei!"
-    )
-
-BASE_URL    = "https://api.ravelry.com"
-AUTH        = (ACCESS_KEY, PERSONAL_KEY)
+BASE_URL     = "https://api.ravelry.com"
 DOWNLOAD_DIR = "ravelry_downloads"
 IGNORE_FILE  = os.path.join(DOWNLOAD_DIR, "ignore.txt")
+
+# Browser-Cookies werden lazy (erst bei Bedarf) geholt und dann für den
+# restlichen Lauf wiederverwendet, damit nicht pro Datei neu eingeloggt wird.
+browser_cookies: dict | None = None
 
 
 # ---------------------------------------------------------------------------
 # Hilfsfunktionen
 # ---------------------------------------------------------------------------
-
-def sanitize_filename(filename: str) -> str:
-    """Bereinigt Dateinamen von Zeichen, die Dateisysteme nicht mögen."""
-    return re.sub(r'[\\/*?:"<>|]', "_", filename)
-
-
-def get_current_username() -> str:
-    """Ermittelt den Benutzernamen des API-Inhabers."""
-    response = requests.get(f"{BASE_URL}/current_user.json", auth=AUTH)
-    response.raise_for_status()
-    return response.json()["user"]["username"]
-
 
 def load_ignore_patterns(ignore_filepath: str) -> list[str]:
     """
@@ -112,41 +106,13 @@ def ensure_download_dir():
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
-def download_pdf(download_url: str, target_path: str):
-    """
-    Lädt eine Datei per Stream herunter und prüft auf gültige PDF-Signatur.
-
-    WICHTIG: Kein auth= mitgeben – die URL ist vorsigniert (S3/CDN).
-    """
-    response = requests.get(download_url, stream=True, timeout=60)
-    response.raise_for_status()
-
-    content_type = response.headers.get("Content-Type", "")
-    chunks = response.iter_content(chunk_size=8192)
-    first_chunk = next(chunks, None)
-
-    if not first_chunk:
-        raise ValueError("Datei ist leer (0 Bytes).")
-
-    # PDF-Signatur oder Content-Type prüfen
-    if not first_chunk.startswith(b"%PDF-") and "application/pdf" not in content_type.lower():
-        preview = first_chunk[:300].decode("utf-8", errors="ignore")
-        raise ValueError(
-            f"Antwort ist kein PDF! (Content-Type: {content_type})\nVorschau:\n{preview}"
-        )
-
-    with open(target_path, "wb") as f:
-        f.write(first_chunk)
-        for chunk in chunks:
-            if chunk:
-                f.write(chunk)
-
-
 def try_download(url: str, filename: str, label: str, ignore_patterns: list[str]) -> str:
     """
-    Zentraler Download-Helper.
+    Zentraler Download-Helper mit automatischem Browser-Login-Fallback.
     Gibt zurück: 'downloaded', 'skipped_exists', 'skipped_ignore', 'error'
     """
+    global browser_cookies
+
     clean_name = sanitize_filename(filename)
     if not clean_name.lower().endswith(".pdf"):
         clean_name += ".pdf"
@@ -161,12 +127,12 @@ def try_download(url: str, filename: str, label: str, ignore_patterns: list[str]
         return "skipped_exists"
 
     print(f"  ⬇️  Lade herunter ({label}): {clean_name}")
-    try:
-        download_pdf(url, target_path)
+    ok, msg, browser_cookies = download_with_login_fallback(url, target_path, browser_cookies)
+    if ok:
         time.sleep(0.3)
         return "downloaded"
-    except Exception as e:
-        print(f"  ❌ Fehler: {e}")
+    else:
+        print(f"  ❌ Fehler: {msg}")
         return "error"
 
 
@@ -180,13 +146,10 @@ def fetch_library_volumes(username: str) -> list:
     page = 1
     print("📚 Lade Bibliothek (Volumes/Bücher) …")
     while True:
-        res = requests.get(
-            f"{BASE_URL}/people/{username}/library/search.json",
-            auth=AUTH,
-            params={"page": page, "page_size": 100, "type": "pdf"},
+        data = api_get(
+            f"/people/{username}/library/search.json",
+            {"page": page, "page_size": 100, "type": "pdf"},
         )
-        res.raise_for_status()
-        data = res.json()
         batch = data.get("volumes", [])
         if not batch:
             break
@@ -209,12 +172,12 @@ def process_volumes(volumes: list, ignore_patterns: list[str]) -> dict:
         title  = vol_summary.get("title") or f"Volume_{vol_id}"
         print(f"[{idx}/{len(volumes)}] Volume: {title}")
 
-        res = requests.get(f"{BASE_URL}/volumes/{vol_id}.json", auth=AUTH, timeout=30)
-        if res.status_code != 200:
-            print(f"  ⚠️  Details konnten nicht geladen werden (HTTP {res.status_code})")
+        try:
+            vol_data = api_get(f"/volumes/{vol_id}.json").get("volume", {})
+        except Exception as e:
+            print(f"  ⚠️  Details konnten nicht geladen werden ({e})")
             continue
 
-        vol_data    = res.json().get("volume", {})
         attachments = vol_data.get("volume_attachments", [])
 
         if not attachments:
@@ -238,26 +201,18 @@ def process_volumes(volumes: list, ignore_patterns: list[str]) -> dict:
 
 def fetch_library_patterns(username: str) -> list:
     """
-    Ruft alle direkt auf Ravelry gekauften Pattern aus der Bibliothek ab.
-
-    Hinweis: Die Ravelry-API gibt Library-Einträge in "volumes" zurück, auch
-    wenn es sich um einzelne Pattern handelt. Es wird deshalb OHNE type-Filter
-    abgerufen und dann nach download_location mit type="ravelry" gefiltert.
+    Ruft alle Library-Einträge ab (ohne type-Filter), um daraus Einzelpattern
+    herauszufiltern (patterns_count == 1, pattern_id gesetzt).
     """
     all_items = []
     page = 1
     print("🧶 Lade Bibliothek (einzelne Pattern) …")
     while True:
-        res = requests.get(
-            f"{BASE_URL}/people/{username}/library/search.json",
-            auth=AUTH,
-            params={"page": page, "page_size": 100},
+        data = api_get(
+            f"/people/{username}/library/search.json",
+            {"page": page, "page_size": 100},
         )
-        res.raise_for_status()
-        data = res.json()
-
-        # Volumes UND Patterns (je nach API-Version in verschiedenen Keys)
-        batch = data.get("volumes", []) + data.get("patterns", [])
+        batch = data.get("volumes", [])
         if not batch:
             break
         all_items.extend(batch)
@@ -273,83 +228,61 @@ def fetch_library_patterns(username: str) -> list:
 
 def get_pattern_download_url(pattern_id: int) -> tuple[str | None, str | None]:
     """
-    Holt die Ravelry-Download-URL für ein einzelnes Pattern.
+    Holt die Download-URL für ein bereits gekauftes Einzelpattern.
+
+    WICHTIG: pattern.download_location.url ist eine KAUF-/CHECKOUT-URL
+    (zum Erwerben), KEINE Download-URL für bereits gekaufte Inhalte!
+    Ist das Pattern schon in der Library (pdf_in_library=true), läuft der
+    PDF-Download über das zugehörige Volume: volumes_in_library ->
+    /volumes/{id}.json -> volume_attachments[].ravelry_download_url.
+
     Gibt (url, filename) zurück oder (None, None) wenn kein Download verfügbar.
     """
-    res = requests.get(
-        f"{BASE_URL}/patterns/{pattern_id}.json",
-        auth=AUTH,
-        timeout=30,
-    )
-    if res.status_code != 200:
+    try:
+        pattern = api_get(f"/patterns/{pattern_id}.json").get("pattern", {})
+    except Exception:
         return None, None
 
-    pattern = res.json().get("pattern", {})
-
-    # Nur Ravelry-Downloads (direkt auf Ravelry gekauft)
-    if not pattern.get("ravelry_download"):
+    if not pattern.get("ravelry_download") or not pattern.get("pdf_in_library"):
         return None, None
 
-    download_location = pattern.get("download_location")
-    if not download_location:
+    volume_ids = pattern.get("volumes_in_library") or []
+    if not volume_ids:
         return None, None
 
-    # download_location kann eine Liste oder ein einzelnes Objekt sein
-    if isinstance(download_location, dict):
-        locations = [download_location]
-    else:
-        locations = download_location
+    try:
+        vol_detail = api_get(f"/volumes/{volume_ids[0]}.json").get("volume", {})
+    except Exception:
+        return None, None
 
-    for loc in locations:
-        if loc.get("type") == "ravelry" and loc.get("url"):
-            name = pattern.get("name") or f"pattern_{pattern_id}"
-            filename = sanitize_filename(name) + ".pdf"
-            return loc["url"], filename
+    attachments = vol_detail.get("volume_attachments", [])
+    if not attachments:
+        return None, None
 
-    # Fallback: irgendeine URL nehmen
-    for loc in locations:
-        if loc.get("url"):
-            name = pattern.get("name") or f"pattern_{pattern_id}"
-            filename = sanitize_filename(name) + ".pdf"
-            return loc["url"], filename
+    att = attachments[0]
+    url = att.get("ravelry_download_url")
+    if not url:
+        return None, None
 
-    return None, None
+    name = pattern.get("name") or f"pattern_{pattern_id}"
+    filename = att.get("filename") or sanitize_filename(name) + ".pdf"
+    return url, filename
 
 
 def process_individual_patterns(items: list, ignore_patterns: list[str]) -> dict:
     """
-    Filtert aus den Library-Items diejenigen heraus, die als Einzelpattern
-    verfügbar sind (kein Volume-Attachment, aber ravelry_download).
+    Filtert aus den Library-Items Einzelpattern heraus (patterns_count == 1,
+    pattern_id gesetzt) und lädt deren PDFs herunter. Volumes mit eigenen
+    volume_attachments wurden bereits in process_volumes behandelt.
     """
     stats = {"downloaded": 0, "skipped_exists": 0, "skipped_ignore": 0, "error": 0}
-    candidates = []
 
-    for item in items:
-        # Volumes mit Attachments wurden bereits in process_volumes behandelt
-        if item.get("volume_attachments"):
-            continue
+    candidates = sorted({
+        item["pattern_id"]
+        for item in items
+        if item.get("pattern_id") and item.get("patterns_count", 1) == 1
+    })
 
-        # Pattern-ID herausfinden: entweder direkt oder via patterns-Array
-        pattern_id = None
-
-        # Manche Library-Items sind Pattern-Wrappers
-        if item.get("ravelry_download"):
-            pattern_id = item.get("id")
-        elif item.get("patterns"):
-            # Manche Volumes enthalten nur Pattern-Referenzen ohne eigenes PDF
-            for p in item.get("patterns", []):
-                if p.get("ravelry_download") and p.get("id"):
-                    candidates.append(p["id"])
-            continue
-        elif item.get("id") and not item.get("volume_attachments"):
-            # Unbekannter Typ – Pattern-Details prüfen
-            pattern_id = item.get("id")
-
-        if pattern_id:
-            candidates.append(pattern_id)
-
-    # Duplikate entfernen
-    candidates = list(set(candidates))
     print(f"  → {len(candidates)} mögliche Einzel-Pattern zum Prüfen.\n")
 
     for idx, pid in enumerate(candidates, start=1):
@@ -376,7 +309,7 @@ def main():
 
     total_stats = {"downloaded": 0, "skipped_exists": 0, "skipped_ignore": 0, "error": 0}
 
-    # --- Schritt 1: Volumes ---
+    # --- Schritt 1: Volumes (eBooks, Collections) ---
     volumes = fetch_library_volumes(username)
     if volumes:
         stats = process_volumes(volumes, ignore_patterns)
@@ -385,8 +318,6 @@ def main():
         print()
 
     # --- Schritt 2: Einzeln gekaufte Pattern ---
-    # Wir holen alle Library-Einträge ungefiltert und prüfen, was dabei ist.
-    # (Volumes wurden in Schritt 1 schon behandelt.)
     all_items = fetch_library_patterns(username)
     if all_items:
         stats = process_individual_patterns(all_items, ignore_patterns)

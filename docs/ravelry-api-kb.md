@@ -123,8 +123,13 @@ GET /volumes/{volume_id}.json
 
 **PDF herunterladen:**
 ```python
-# KEIN auth= mitgeben! Die URL ist bereits signiert (S3/CDN).
-response = requests.get(volume["volume_attachments"][0]["ravelry_download_url"], stream=True)
+# KEIN API-auth= mitgeben – aber eine eingeloggte Browser-Session (Cookies)
+# ist nötig, siehe Abschnitt 10.1!
+response = requests.get(
+    volume["volume_attachments"][0]["ravelry_download_url"],
+    cookies=browser_cookies,
+    stream=True,
+)
 ```
 
 ---
@@ -160,7 +165,14 @@ GET /patterns/{pattern_id}.json
 }
 ```
 
-> **Hinweis:** `download_location[].url` für `type=ravelry` ist die direkte Download-URL für ein auf Ravelry gekauftes Pattern. Auch hier kein `auth=` benötigt – die URL ist bereits signiert.
+> **Hinweis (korrigiert nach Live-Test):** `download_location[].url` ist eine
+> **Kauf-/Checkout-URL** (`/purchase/...` bzw. `/download/{id}/checkout`), KEINE
+> direkte Download-URL für bereits gekaufte Inhalte! Sie leitet auf die
+> Warenkorb-/Checkout-Seite, nicht auf das PDF. Für ein Pattern, das schon in der
+> eigenen Library ist (`pdf_in_library: true`), muss der Download stattdessen über
+> `volumes_in_library` → `/volumes/{id}.json` → `volume_attachments[].ravelry_download_url`
+> erfolgen (siehe Abschnitt 8). Diese URL braucht ebenfalls eine eingeloggte
+> Browser-Session (siehe Abschnitt 10.1).
 
 ### 4.2 Pattern-Suche in der eigenen Bibliothek
 
@@ -364,28 +376,38 @@ while page <= data["paginator"]["page_count"]:
 
 ---
 
-## 8. PDF-Download-Workflow (komplett)
+## 8. PDF-Download-Workflow (komplett, live-verifiziert Okt. 2026)
 
-### 8.1 Volumes (Bücher/Magazine/Collections)
+**Zentrale Erkenntnis:** JEDER Library-Eintrag – egal ob eBook, Collection,
+Einzelpattern oder Bundle-Teil – ist technisch ein **Volume**-Objekt. Der
+PDF-Download läuft für alle Varianten über denselben Mechanismus:
 
 ```
-library/search.json?type=pdf
-    └─> Volumes-Liste
+library/search.json  (type=pdf ODER ohne Filter)
+    └─> volumes[]  (Summary: id, pattern_id, pattern_source_id, patterns_count, has_downloads)
          └─> /volumes/{id}.json
                └─> volume_attachments[].ravelry_download_url
-                     └─> Direkter S3-Download (kein auth benötigt)
+                     └─> Download MIT Browser-Session-Cookie (siehe 10.1)
 ```
 
-### 8.2 Einzeln gekaufte Ravelry-Pattern
+Unterscheidung der Volume-Typen anhand der Summary-Felder:
 
-```
-library/search.json (kein type-Filter oder type=ravelry)
-    └─> patterns[] mit ravelry_download: true
-         └─> download_location[].url  (type="ravelry")
-               └─> Direkter S3-Download (kein auth benötigt)
-```
+| Typ | Erkennungsmerkmal |
+|---|---|
+| **eBook/Buch** | `pattern_id` gesetzt, `patterns_count == 1`, meist mehrere `volume_attachments` (z.B. NL/US-Version + Chart) |
+| **Einzelpattern** | identisch zum eBook-Fall – Ravelry legt für jeden Pattern-Kauf intern ein 1:1-Volume an |
+| **Collection** | `pattern_source_id` gesetzt, `patterns_count > 1`, EIN Volume mit mehreren Attachments (je 1 pro enthaltenem Pattern) |
+| **Bundle** | mehrere Volumes mit `patterns_count == 1`, aber identischem `created_at`-Zeitstempel (= derselbe Checkout) |
 
-### 8.3 Pattern mit externem PDF (z.B. vom Designer-Website)
+### 8.1 download_location.url ist KEINE Download-URL
+
+`pattern.download_location[].url` (z.B. `http://www.ravelry.com/purchase/.../123`
+oder `/download/{id}/checkout`) ist eine **Kauf-/Checkout-URL**. Sie führt zum
+Warenkorb, nicht zum PDF – auch nicht mit gültiger Browser-Session. Ist das
+Pattern bereits gekauft (`pattern.pdf_in_library: true`), muss der Download
+stattdessen über `pattern.volumes_in_library[0]` → `/volumes/{id}.json` laufen.
+
+### 8.2 Pattern mit externem PDF (z.B. von der Designer-Website)
 
 ```
 /patterns/{id}.json
@@ -485,17 +507,48 @@ library/search.json (kein type-Filter oder type=ravelry)
 
 - Kein offiziell dokumentiertes Rate-Limit, aber **0.3s Pause** zwischen Requests empfohlen
 - Max. `page_size = 100` (manche Endpunkte weniger)
-- Download-URLs sind **zeitlich begrenzte, vorsignierte S3-Links** – nicht cachen, immer frisch holen
-- Die Download-URLs (`ravelry_download_url`, `download_location[].url`) brauchen **kein** `auth=`-Header
-- Bei API-Calls immer `auth=AUTH` setzen
+- Bei REST-API-Calls (`api.ravelry.com`) immer `auth=AUTH` (Basic Auth mit den API-Keys) setzen
+
+### 10.1 Zwei getrennte Auth-Systeme bei Downloads (wichtig!)
+
+Live-getestet (Oktober 2026) mit echten gekauften/hinzugefügten Library-Inhalten:
+
+| Download-Typ | URL-Muster | Benötigte Auth |
+|---|---|---|
+| **Kostenloses Pattern** | `/dls/{id}/{code}` | Keine – leitet direkt auf eine zeitlich begrenzte, vorsignierte S3-URL weiter |
+| **Alles andere** (`volume_attachments[].ravelry_download_url`) | `/download/{id}/checkout` | **Eingeloggte Browser-Session** (Cookies) – API-Keys werden NICHT akzeptiert |
+
+Ohne gültige Session liefert `/download/{id}/checkout` eine HTML-Login-Seite
+(`<title>Ravelry</title>` bzw. `<title>Ravelry: Checking out...</title>`)
+statt des PDFs – erkennbar am `Content-Type: text/html` und fehlender
+`%PDF-`-Signatur im Response-Body.
+
+**Praktische Lösung:** Browser-Login per [Playwright](https://playwright.dev/python/)
+automatisieren – ein sichtbares Chromium-Fenster öffnen, Nutzer loggt sich manuell
+ein (2FA-fähig), danach `context.cookies()` abgreifen und bei allen folgenden
+`requests.get(url, cookies=...)`-Aufrufen mitschicken. Session-Cookies halten
+typischerweise mehrere Tage bis Wochen und können lokal zwischengespeichert werden,
+um nicht bei jedem Lauf neu einzuloggen. Implementiert in `ravelry_common.py`
+(`ensure_browser_login()`).
 
 ---
 
 ## 11. Nicht-öffentliche / Dokumentationslücken
 
-Die offizielle Ravelry-API-Doku ist nur nach Login zugänglich. Folgende Dinge wurden durch Community-Reverse-Engineering ermittelt und können sich ändern:
+Die offizielle Ravelry-API-Doku ist nur nach Login zugänglich. Live-verifiziert
+(Oktober 2026, siehe Abschnitt 8 und 10.1):
 
-- Genaue `type`-Werte für `library/search.json`
-- Ob `patterns`-Array im Library-Response tatsächlich erscheint (muss live verifiziert werden)
-- Download-URL-Format (S3 vs. eigener Proxy)
-- Ablaufzeit der vorsignierten URLs
+- ✅ **Geklärt:** `library/search.json` liefert IMMER `volumes[]` zurück (kein
+  separates `patterns[]`-Array) – auch für Einzelpattern und Bundle-Teile.
+  Relevante Felder: `id`, `pattern_id`, `pattern_source_id`, `patterns_count`,
+  `has_downloads`, `created_at`.
+- ✅ **Geklärt:** `download_location[].url` ist eine Kauf-URL, nicht die
+  PDF-Download-URL (siehe 8.1).
+- ✅ **Geklärt:** `volume_attachments[].ravelry_download_url` erfordert eine
+  eingeloggte Browser-Session, nicht die REST-API-Keys (siehe 10.1).
+
+Weiterhin unklar / kann sich ändern:
+
+- Exakte Ablaufzeit der Browser-Session-Cookies
+- Ob/wie sich das Verhalten bei OAuth2-Apps (statt Personal Key) unterscheidet
+- Genaue `type`-Werte für `library/search.json` jenseits von `pdf`

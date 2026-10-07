@@ -8,31 +8,9 @@
 # ]
 # ///
 
-import os
-import requests
 import pandas as pd
-from dotenv import load_dotenv
 
-# .env-Datei laden
-load_dotenv()
-
-# Schlüssel aus den Umgebungsvariablen lesen
-ACCESS_KEY = os.getenv("RAVELRY_ACCESS_KEY")
-PERSONAL_KEY = os.getenv("RAVELRY_PERSONAL_KEY")
-
-# Prüfen, ob die Keys vorhanden sind
-if not ACCESS_KEY or not PERSONAL_KEY:
-    raise ValueError("Fehler: RAVELRY_ACCESS_KEY oder RAVELRY_PERSONAL_KEY nicht in der .env-Datei gefunden!")
-
-BASE_URL = "https://api.ravelry.com"
-AUTH = (ACCESS_KEY, PERSONAL_KEY)
-
-
-def get_current_username() -> str:
-    """Ermittelt den Benutzernamen des API-Inhabers."""
-    response = requests.get(f"{BASE_URL}/current_user.json", auth=AUTH)
-    response.raise_for_status()
-    return response.json()["user"]["username"]
+from ravelry_common import api_get, get_current_username
 
 
 def fetch_all_projects(username: str) -> pd.DataFrame:
@@ -42,12 +20,7 @@ def fetch_all_projects(username: str) -> pd.DataFrame:
     page_size = 50
 
     while True:
-        url = f"{BASE_URL}/projects/{username}/list.json"
-        params = {"page": page, "page_size": page_size}
-
-        response = requests.get(url, auth=AUTH, params=params)
-        response.raise_for_status()
-        data = response.json()
+        data = api_get(f"/projects/{username}/list.json", {"page": page, "page_size": page_size})
 
         current_page_projects = data.get("projects", [])
         if not current_page_projects:
@@ -74,12 +47,7 @@ def fetch_all_stash(username: str) -> pd.DataFrame:
     page_size = 50
 
     while True:
-        url = f"{BASE_URL}/people/{username}/stash/list.json"
-        params = {"page": page, "page_size": page_size}
-
-        response = requests.get(url, auth=AUTH, params=params)
-        response.raise_for_status()
-        data = response.json()
+        data = api_get(f"/people/{username}/stash/list.json", {"page": page, "page_size": page_size})
 
         current_page_items = data.get("stash", [])
         if not current_page_items:
@@ -144,4 +112,3 @@ if __name__ == "__main__":
         # Optional: Als CSV/Excel exportieren
         # df_projects.to_csv("ravelry_projects.csv", index=False)
         # df_stash.to_csv("ravelry_stash.csv", index=False)
-

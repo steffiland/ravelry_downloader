@@ -3,6 +3,7 @@
 # dependencies = [
 #   "requests",
 #   "python-dotenv",
+#   "playwright",
 # ]
 # ///
 
@@ -22,89 +23,47 @@ Varianten:
 
 Downloads landen in: test_downloads/
 
-WICHTIGE EINSCHRÄNKUNG (kein Bug, sondern Ravelry-Verhalten):
----------------------------------------------------------------
-Nur KOSTENLOSE Downloads (`/dls/{id}/{code}`-URLs) leiten direkt auf eine
-vorsignierte S3-URL weiter und funktionieren mit den API-Keys (Variante 1).
-
-KOSTENPFLICHTIGE Downloads laufen über `/download/{id}/checkout`-URLs
-(egal ob Einzelpattern, eBook, Collection oder Bundle – Varianten 2-6).
-Diese URLs prüfen eine eingeloggte BROWSER-SESSION (Cookie-Login unter
-www.ravelry.com/account/login) und akzeptieren KEINE Basic-Auth-API-Keys.
-Die REST-API (api.ravelry.com) und der Datei-Download (www.ravelry.com)
-sind zwei getrennte Auth-Systeme.
-
-Für automatisierte Downloads kostenpflichtiger Inhalte braucht man daher
-zusätzlich eine Session-Cookie-Authentifizierung (z.B. Login-Form per
-requests.Session() simulieren, oder Cookies aus einem echten Browser-Login
-exportieren und mitschicken). Das ist NICHT Teil dieses Test-Scripts.
+KOSTENPFLICHTIGE DOWNLOADS (Varianten 2-6):
+---------------------------------------------
+Deren URLs (/download/{id}/checkout) verlangen eine eingeloggte Browser-
+Session statt der REST-API-Keys. Liefert ein Download-Versuch eine
+HTML-Login-Seite statt eines PDFs, öffnet dieses Script automatisch einen
+sichtbaren Browser (Playwright) zum manuellen Einloggen – siehe
+ravelry_common.ensure_browser_login(). Die Session wird danach lokal
+zwischengespeichert (.ravelry_session.json), sodass spätere Läufe nicht
+erneut einloggen müssen.
 """
 
-import os
 import json
-import re
 import sys
 import time
+
+from ravelry_common import (
+    AUTH,
+    api_get,
+    download_with_login_fallback,
+    get_current_username,
+    sanitize_filename,
+)
 from collections import defaultdict
-import requests
-from dotenv import load_dotenv
 
-load_dotenv()
-
-ACCESS_KEY   = os.getenv("RAVELRY_ACCESS_KEY")
-PERSONAL_KEY = os.getenv("RAVELRY_PERSONAL_KEY")
-
-if not ACCESS_KEY or not PERSONAL_KEY:
-    sys.exit("❌ RAVELRY_ACCESS_KEY oder RAVELRY_PERSONAL_KEY fehlt in der .env-Datei!")
-
-BASE_URL  = "https://api.ravelry.com"
-AUTH      = (ACCESS_KEY, PERSONAL_KEY)
-TEST_DIR  = "test_downloads"
+TEST_DIR = "test_downloads"
+import os
 os.makedirs(TEST_DIR, exist_ok=True)
+
+# Browser-Cookies werden lazy (erst bei Bedarf) geholt und dann für den
+# restlichen Lauf wiederverwendet, damit nicht pro Variante neu eingeloggt wird.
+browser_cookies: dict | None = None
 
 
 # ── Hilfsfunktionen ────────────────────────────────────────────────────────
 
-def get(path: str, params: dict | None = None) -> dict:
-    """GET gegen die Ravelry-API mit Auth."""
-    r = requests.get(f"{BASE_URL}{path}", auth=AUTH, params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
-
-
-def sanitize(name: str) -> str:
-    return re.sub(r'[\\/*?:"<>|]', "_", name)
-
-
 def save_pdf(url: str, filename: str) -> tuple[bool, str]:
-    """
-    Lädt eine Datei von url nach TEST_DIR/{filename}.
-    Gibt (True, pfad) oder (False, fehlermeldung) zurück.
-    Kein auth= nötig – vorsignierte S3-URL.
-    """
-    path = os.path.join(TEST_DIR, sanitize(filename))
-    if not path.lower().endswith(".pdf"):
-        path += ".pdf"
-    try:
-        r = requests.get(url, stream=True, timeout=60)
-        r.raise_for_status()
-        chunks = r.iter_content(chunk_size=8192)
-        first  = next(chunks, None)
-        if not first:
-            return False, "Datei leer (0 Bytes)"
-        ct = r.headers.get("Content-Type", "")
-        if not first.startswith(b"%PDF-") and "pdf" not in ct.lower():
-            preview = first[:200].decode("utf-8", errors="ignore")
-            return False, f"Kein PDF (Content-Type: {ct})\n    Vorschau: {preview!r}"
-        with open(path, "wb") as f:
-            f.write(first)
-            for chunk in chunks:
-                if chunk:
-                    f.write(chunk)
-        size_kb = os.path.getsize(path) // 1024
-        return True, f"{path}  ({size_kb} KB)"
-    except Exception as e:
-        return False, str(e)
+    """Lädt ein PDF herunter, mit automatischem Browser-Login-Fallback."""
+    global browser_cookies
+    path = os.path.join(TEST_DIR, sanitize_filename(filename))
+    ok, msg, browser_cookies = download_with_login_fallback(url, path, browser_cookies)
+    return ok, msg
 
 
 def result(label: str, ok: bool, detail: str):
@@ -128,7 +87,7 @@ def dump(label: str, data):
 
 # ── Username ermitteln ─────────────────────────────────────────────────────
 
-me = get("/current_user.json")["user"]["username"]
+me = get_current_username()
 print(f"\n👤 Eingeloggt als: {me}")
 
 
@@ -137,7 +96,7 @@ print(f"\n👤 Eingeloggt als: {me}")
 # ══════════════════════════════════════════════════════════════════════════
 section("1 · Kostenloses Ravelry-Download-Pattern")
 
-data = get("/patterns/search.json", {
+data = api_get("/patterns/search.json", {
     "availability": "free+ravelry",  # kostenlos UND direkt auf Ravelry
     "page_size": 1,
     "sort": "favorites",
@@ -151,7 +110,7 @@ else:
     name = patterns_free[0].get("name", f"pattern_{pid}")
     print(f"  Pattern: {name!r}  (ID {pid})")
 
-    detail = get(f"/patterns/{pid}.json")["pattern"]
+    detail = api_get(f"/patterns/{pid}.json")["pattern"]
     dump("Pattern-Felder (Auszug)", {
         "ravelry_download": detail.get("ravelry_download"),
         "free": detail.get("free"),
@@ -167,7 +126,7 @@ else:
     url = next((l["url"] for l in (loc or []) if l.get("url")), None)
 
     if url:
-        ok, msg = save_pdf(url, f"01_free_{sanitize(name)}.pdf")
+        ok, msg = save_pdf(url, f"01_free_{sanitize_filename(name)}.pdf")
         result("Variante 1 – Kostenloses Ravelry-Pattern", ok, msg)
     else:
         result("Variante 1", False, "Keine download_location.url gefunden.")
@@ -187,7 +146,7 @@ section("2 · Kostenpflichtiges Ravelry-Pattern (Library)")
 #   pattern_source_id  -> gesetzt bei Collections/Heften, sonst null
 #   patterns_count     -> >1 bedeutet Collection
 #   has_downloads      -> ob überhaupt PDFs hinterlegt sind
-lib_data = get(f"/people/{me}/library/search.json", {"page_size": 100})
+lib_data = api_get(f"/people/{me}/library/search.json", {"page_size": 100})
 all_volumes = lib_data.get("volumes", [])
 paginator = lib_data.get("paginator", {})
 
@@ -201,7 +160,7 @@ for item in all_volumes:
     if not pid or item.get("patterns_count", 1) != 1:
         continue  # keine Einzelpattern-Entry (sondern Collection o.ä.)
 
-    detail = get(f"/patterns/{pid}.json").get("pattern", {})
+    detail = api_get(f"/patterns/{pid}.json").get("pattern", {})
     if not detail.get("ravelry_download") or detail.get("free"):
         continue  # wir suchen explizit ein KOSTENPFLICHTIGES Pattern
 
@@ -215,16 +174,28 @@ for item in all_volumes:
         "download_location": detail.get("download_location"),
     })
 
-    loc = detail.get("download_location")
-    if isinstance(loc, dict):
-        loc = [loc]
-    url = next((l["url"] for l in (loc or []) if l.get("url")), None)
+    # WICHTIG: download_location.url ist eine KAUF-/CHECKOUT-URL (zum
+    # Erwerben eines Patterns), KEINE Download-URL für bereits gekaufte
+    # Inhalte! Ist das Pattern schon in der Library (pdf_in_library=true),
+    # muss der PDF-Download über das zugehörige Volume laufen (wie bei den
+    # Varianten 3/4): volumes_in_library -> /volumes/{id}.json ->
+    # volume_attachments[].ravelry_download_url.
+    url, filename = None, None
+    volume_ids = detail.get("volumes_in_library") or []
+    if detail.get("pdf_in_library") and volume_ids:
+        vol_detail = api_get(f"/volumes/{volume_ids[0]}.json").get("volume", {})
+        attachments = vol_detail.get("volume_attachments", [])
+        if attachments:
+            att = attachments[0]
+            url = att.get("ravelry_download_url")
+            filename = att.get("filename") or f"{sanitize_filename(name)}.pdf"
 
     if url:
-        ok, msg = save_pdf(url, f"02_paid_{sanitize(name)}.pdf")
+        ok, msg = save_pdf(url, f"02_paid_{sanitize_filename(filename)}")
         result("Variante 2 – Kostenpflichtiges Ravelry-Pattern", ok, msg)
     else:
-        result("Variante 2", False, "Keine download_location.url gefunden.")
+        result("Variante 2", False,
+               "Pattern weder mit volumes_in_library noch mit Download-URL gefunden.")
     paid_pattern_found = True
     time.sleep(0.3)
     break  # nur das erste
@@ -250,7 +221,7 @@ else:
     dump("Erster Library-Eintrag (Summary)", first_item)
 
     vol_id = first_item.get("id")
-    vol_detail = get(f"/volumes/{vol_id}.json").get("volume", {})
+    vol_detail = api_get(f"/volumes/{vol_id}.json").get("volume", {})
     attachments = vol_detail.get("volume_attachments", [])
     dump("Volume-Details: volume_attachments (Dateinamen)",
          [a.get("filename") for a in attachments])
@@ -262,7 +233,7 @@ else:
         filename = att.get("filename") or f"03_library_{vol_id}.pdf"
 
     if url:
-        ok, msg = save_pdf(url, f"03_library_{sanitize(filename)}")
+        ok, msg = save_pdf(url, f"03_library_{sanitize_filename(filename)}")
         result("Variante 3 – Library-Eintrag", ok, msg)
     else:
         result("Variante 3", False, "Keine Download-URL in diesem Eintrag gefunden.")
@@ -274,7 +245,7 @@ else:
 # ══════════════════════════════════════════════════════════════════════════
 section("4 · eBook / Volume (type=pdf)")
 
-pdf_lib = get(f"/people/{me}/library/search.json", {
+pdf_lib = api_get(f"/people/{me}/library/search.json", {
     "page_size": 1,
     "type": "pdf",
 })
@@ -287,7 +258,7 @@ else:
     vol_title = pdf_volumes[0].get("title", f"Volume_{vol_id}")
     print(f"  Volume: {vol_title!r}  (ID {vol_id})")
 
-    vol_detail = get(f"/volumes/{vol_id}.json")["volume"]
+    vol_detail = api_get(f"/volumes/{vol_id}.json")["volume"]
     attachments = vol_detail.get("volume_attachments", [])
 
     dump("Volume-Felder (Auszug)", {
@@ -304,9 +275,9 @@ else:
     else:
         att = attachments[0]
         url = att.get("ravelry_download_url")
-        filename = att.get("filename") or f"04_ebook_{sanitize(vol_title)}.pdf"
+        filename = att.get("filename") or f"04_ebook_{sanitize_filename(vol_title)}.pdf"
         if url:
-            ok, msg = save_pdf(url, f"04_ebook_{sanitize(filename)}")
+            ok, msg = save_pdf(url, f"04_ebook_{sanitize_filename(filename)}")
             result("Variante 4 – eBook/Volume", ok, msg)
         else:
             result("Variante 4", False, "ravelry_download_url fehlt in attachment.")
@@ -337,7 +308,7 @@ else:
     print(f"  Collection: {title!r}  (Volume-ID {vol_id}, "
           f"{collection_item.get('patterns_count')} Patterns)")
 
-    vol_detail  = get(f"/volumes/{vol_id}.json").get("volume", {})
+    vol_detail  = api_get(f"/volumes/{vol_id}.json").get("volume", {})
     attachments = vol_detail.get("volume_attachments", [])
     dump("Collection-Attachments (Dateinamen)",
          [a.get("filename") for a in attachments])
@@ -347,9 +318,9 @@ else:
     else:
         att = attachments[0]
         url = att.get("ravelry_download_url")
-        filename = att.get("filename") or f"05_collection_{sanitize(title)}.pdf"
+        filename = att.get("filename") or f"05_collection_{sanitize_filename(title)}.pdf"
         if url:
-            ok, msg = save_pdf(url, f"05_collection_{sanitize(filename)}")
+            ok, msg = save_pdf(url, f"05_collection_{sanitize_filename(filename)}")
             result("Variante 5 – Collection", ok, msg)
         else:
             result("Variante 5", False, "ravelry_download_url fehlt in attachment.")
@@ -368,7 +339,7 @@ section("6 · Bundle (mehrere Einzelpattern im selben Kauf)")
 # (Variante 5, EIN Volume mit patterns_count > 1).
 all_lib = []
 for pg in range(1, 10):
-    page_data = get(f"/people/{me}/library/search.json", {"page_size": 100, "page": pg})
+    page_data = api_get(f"/people/{me}/library/search.json", {"page_size": 100, "page": pg})
     all_lib.extend(page_data.get("volumes", []))
     if pg >= page_data.get("paginator", {}).get("page_count", 1):
         break
@@ -393,17 +364,17 @@ else:
 
     first = bundle_group[0]
     vol_id = first.get("id")
-    vol_detail = get(f"/volumes/{vol_id}.json").get("volume", {})
+    vol_detail = api_get(f"/volumes/{vol_id}.json").get("volume", {})
     attachments = vol_detail.get("volume_attachments", [])
 
     url, filename = None, None
     if attachments:
         att = attachments[0]
         url = att.get("ravelry_download_url")
-        filename = att.get("filename") or f"06_bundle_{sanitize(first.get('title', str(vol_id)))}.pdf"
+        filename = att.get("filename") or f"06_bundle_{sanitize_filename(first.get('title', str(vol_id)))}.pdf"
 
     if url:
-        ok, msg = save_pdf(url, f"06_bundle_{sanitize(filename)}")
+        ok, msg = save_pdf(url, f"06_bundle_{sanitize_filename(filename)}")
         result(f"Variante 6 – Bundle-Teil: {first.get('title')!r}", ok, msg)
     else:
         result("Variante 6", False, "Erstes Bundle-Pattern hat keinen PDF-Anhang.")
@@ -419,9 +390,3 @@ for f in sorted(os.listdir(TEST_DIR)):
     size = os.path.getsize(os.path.join(TEST_DIR, f)) // 1024
     print(f"    {f}  ({size} KB)")
 print('═' * 60)
-print(
-    "\nHinweis: Varianten 2–6 (kostenpflichtig) scheitern bei den meisten\n"
-    "Accounts mit 'text/html' statt PDF, weil /download/{id}/checkout eine\n"
-    "eingeloggte Browser-Session statt API-Keys erwartet. Siehe Docstring\n"
-    "am Dateianfang für Details."
-)
