@@ -65,30 +65,39 @@ class TestCookiesLookValid:
         assert rc._cookies_look_valid(cookies) is False
 
 
-class TestExtractFileChooserUrl:
+class TestParseChooserLinks:
     """
     Für Pattern mit mehreren Dateien (z.B. Sprachvarianten) liefert
     `/dls/{id}/{code}` keine PDF-Signatur, sondern eine HTML-"Datei
     wählen"-Zwischenseite mit `/dl/{company}/{id}?filename=...`-Links – auch
-    OHNE Login-Problem. download_pdf() muss diese Seite erkennen und einem
-    passenden Link folgen, statt sie als Login-Fehler zu behandeln.
+    OHNE Login-Problem. _parse_chooser_links() muss ALLE Dateien mit ihrem
+    echten Ravelry-Dateinamen zurückgeben, damit der Aufrufer sie wie jeden
+    anderen Download durch die normale ignore.txt-Filterung schicken kann –
+    KEINE Bevorzugung einer Variante im Code (siehe fetch_file_variants()).
+    Das gilt nicht nur für Sprachübersetzungen, sondern auch für andere
+    Datei-Varianten wie "Easy Read", Charts oder druckfreundliche Fassungen.
     """
 
-    def test_returns_none_for_real_login_page(self):
+    def test_returns_empty_list_for_real_login_page(self):
         html = '<html><body>Please <a href="/account/login">log in</a></body></html>'
-        assert rc._extract_file_chooser_url(html) is None
+        assert rc._parse_chooser_links(html) == []
 
-    def test_extracts_single_dl_link(self):
+    def test_extracts_single_dl_link_with_real_filename(self):
         html = (
             '<a href="https://www.ravelry.com/dl/scheepjes/827389'
             '?filename=30.__DUTCH__Alto_Mare_Wrap.pdf">30.__DUTCH__Alto_Mare_Wrap.pdf</a>'
         )
-        assert rc._extract_file_chooser_url(html) == (
-            "https://www.ravelry.com/dl/scheepjes/827389"
-            "?filename=30.__DUTCH__Alto_Mare_Wrap.pdf"
-        )
+        assert rc._parse_chooser_links(html) == [
+            (
+                "30.__DUTCH__Alto_Mare_Wrap.pdf",
+                "https://www.ravelry.com/dl/scheepjes/827389"
+                "?filename=30.__DUTCH__Alto_Mare_Wrap.pdf",
+            )
+        ]
 
-    def test_prefers_us_variant_among_multiple_languages(self):
+    def test_extracts_all_language_variants_in_order(self):
+        """ALLE Sprachvarianten müssen zurückkommen, nicht nur eine
+        bevorzugte – die Auswahl passiert später über ignore.txt."""
         html = "".join(
             f'<a href="https://www.ravelry.com/dl/scheepjes/{code}'
             f'?filename=30.__{lang}__Alto_Mare_Wrap.pdf">x</a>'
@@ -98,19 +107,38 @@ class TestExtractFileChooserUrl:
                 (827394, "US"),
             ]
         )
-        assert rc._extract_file_chooser_url(html) == (
-            "https://www.ravelry.com/dl/scheepjes/827394"
-            "?filename=30.__US__Alto_Mare_Wrap.pdf"
-        )
+        result = rc._parse_chooser_links(html)
+        assert [filename for filename, _ in result] == [
+            "30.__DUTCH__Alto_Mare_Wrap.pdf",
+            "30.__FRENCH__Alto_Mare_Wrap.pdf",
+            "30.__US__Alto_Mare_Wrap.pdf",
+        ]
 
     def test_normalizes_http_scheme_to_https(self):
         html = (
             '<a href="http://www.ravelry.com/dl/scheepjes/827389'
             '?filename=file.pdf">x</a>'
         )
-        assert rc._extract_file_chooser_url(html) == (
-            "https://www.ravelry.com/dl/scheepjes/827389?filename=file.pdf"
+        filename, url = rc._parse_chooser_links(html)[0]
+        assert url == "https://www.ravelry.com/dl/scheepjes/827389?filename=file.pdf"
+
+    def test_deduplicates_repeated_links(self):
+        """Jeder Link taucht auf der echten Seite zweimal auf (Dateiname-
+        Text + Download-Icon) – darf aber nur einmal zurückkommen."""
+        html = (
+            '<a href="https://www.ravelry.com/dl/scheepjes/827389?filename=f.pdf">f.pdf</a>'
+            '<a href="https://www.ravelry.com/dl/scheepjes/827389?filename=f.pdf">'
+            '<img src="icon.png"></a>'
         )
+        assert len(rc._parse_chooser_links(html)) == 1
+
+    def test_url_decodes_filename(self):
+        html = (
+            '<a href="https://www.ravelry.com/dl/scheepjes/827389'
+            '?filename=30.%20US%20Alto%20Mare%20Wrap.pdf">x</a>'
+        )
+        filename, _ = rc._parse_chooser_links(html)[0]
+        assert filename == "30. US Alto Mare Wrap.pdf"
 
 
 class TestCookiesToRequestsDict:

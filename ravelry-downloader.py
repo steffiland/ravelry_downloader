@@ -85,6 +85,7 @@ import time
 from ravelry_common import (
     api_get,
     download_with_login_fallback,
+    fetch_file_variants,
     get_current_username,
     sanitize_filename,
 )
@@ -730,19 +731,45 @@ def process_reference_collections(
                 att = attachments[0]
                 url = att.get("ravelry_download_url")
                 filename = att.get("filename") or sanitize_filename(name) + ".pdf"
-            else:
-                # Nicht in Library, aber ravelry_download=true -> i.d.R. kostenlos,
-                # download_location.url ist dann der direkte /dls/-Downloadlink.
-                loc = detail.get("download_location")
-                if isinstance(loc, dict):
-                    loc = [loc]
-                url = next((l["url"] for l in (loc or []) if l.get("url")), None)
-                filename = sanitize_filename(name) + ".pdf"
+                if not url:
+                    print("    ℹ️  Keine Download-URL gefunden.")
+                    continue
+                result = try_download(url, filename, "Collection-Pattern", ignore_patterns)
+                stats[result] = stats.get(result, 0) + 1
+                continue
+
+            # Nicht in Library, aber ravelry_download=true -> i.d.R. kostenlos,
+            # download_location.url ist dann der direkte /dls/-Downloadlink.
+            loc = detail.get("download_location")
+            if isinstance(loc, dict):
+                loc = [loc]
+            url = next((l["url"] for l in (loc or []) if l.get("url")), None)
 
             if not url:
                 print("    ℹ️  Keine Download-URL gefunden.")
                 continue
 
+            # Pattern mit MEHREREN Dateien liefert /dls/-URL statt eines
+            # PDFs eine "Datei wählen"-Seite mit je einem Link pro Datei.
+            # Das betrifft nicht nur Sprachübersetzungen (sehr häufig bei
+            # Referenz-Collections wie Scheepjes "YARN - The After Party"),
+            # sondern z.B. auch "Easy Read"-Versionen, separate Strick-
+            # diagramme/Charts oder druckfreundliche Fassungen. Jede dieser
+            # Dateien wird einzeln über try_download() geladen, damit
+            # ignore.txt (das bereits etliche Sprach-Ausschlüsse wie
+            # _NL.pdf/_FR.pdf/_KR.pdf pflegt und beliebig um andere
+            # Varianten-Ausschlüsse ergänzt werden kann) genauso greift wie
+            # bei allen anderen Downloads – KEINE Bevorzugung im Code.
+            file_variants = fetch_file_variants(url)
+            if file_variants is not None:
+                for variant_filename, variant_url in file_variants:
+                    result = try_download(
+                        variant_url, variant_filename, "Collection-Pattern", ignore_patterns
+                    )
+                    stats[result] = stats.get(result, 0) + 1
+                continue
+
+            filename = sanitize_filename(name) + ".pdf"
             result = try_download(url, filename, "Collection-Pattern", ignore_patterns)
             stats[result] = stats.get(result, 0) + 1
 

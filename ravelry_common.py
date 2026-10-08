@@ -26,6 +26,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import unquote
 
 import requests
 from dotenv import load_dotenv
@@ -75,47 +76,84 @@ def _is_pdf_response(content_type: str, first_chunk: bytes) -> bool:
 _DL_LINK_RE = re.compile(r'href="(https?://www\.ravelry\.com/dl/[^"]+)"')
 
 
-def _extract_file_chooser_url(html: str) -> str | None:
+def _parse_chooser_links(html: str) -> list[tuple[str, str]]:
     """
-    Extrahiert eine Direkt-Download-URL aus einer Ravelry-"Datei wählen"-
-    Zwischenseite.
+    Parst eine Ravelry-"Datei wählen"-Zwischenseite und gibt eine Liste von
+    (dateiname, download_url) zurück – eine pro gefundener Datei, in der
+    Reihenfolge, in der sie auf der Seite stehen. dateiname ist der ECHTE
+    Ravelry-Dateiname (aus dem `filename=`-Query-Parameter, URL-dekodiert,
+    z.B. "30.__NL__Alto_Mare_Wrap.pdf") – damit nachgelagerte Aufrufer die
+    übliche ignore.txt-Filterung (is_ignored) pro Datei anwenden können,
+    statt irgendeine Variante im Code hart zu bevorzugen.
 
     Hintergrund: `download_location.url` (bzw. die daraus abgeleitete
     `/dls/{id}/{code}`-URL) liefert bei einem Pattern mit NUR EINER Datei
-    direkt das PDF. Hat das Pattern aber mehrere Dateien (typischerweise
-    Übersetzungen/Sprachvarianten – sehr häufig bei Referenz-Collections wie
-    Scheepjes "YARN - The After Party"), liefert dieselbe URL stattdessen eine
-    HTML-Seite mit je einem `/dl/{company}/{id}?filename=...`-Link pro Datei.
+    direkt das PDF. Hat das Pattern aber mehrere Dateien, liefert dieselbe
+    URL stattdessen eine HTML-Seite mit je einem
+    `/dl/{company}/{id}?filename=...`-Link pro Datei. "Mehrere Dateien" ist
+    NICHT auf Sprachübersetzungen beschränkt (die bei Referenz-Collections
+    wie Scheepjes "YARN - The After Party" am häufigsten vorkommen) – es gibt
+    z.B. auch "Easy Read"-Versionen, Strickdiagramme/Charts als separate
+    Datei, oder druckfreundliche Varianten. Diese Funktion unterscheidet
+    nicht zwischen den Varianten-Typen, sondern sammelt schlicht ALLE
+    gefundenen Dateien; welche davon tatsächlich geladen werden, entscheidet
+    ignore.txt beim Aufrufer.
+
     Das sieht für die Content-Type-Prüfung wie eine fehlgeschlagene
     Login-Weiterleitung aus, ist aber eine normale Zwischenseite und braucht
     KEINEN Login – die Links sind auch ohne Session sichtbar.
 
-    Bevorzugt wird eine Datei, deren Dateiname auf Englisch hindeutet (US/UK/
-    ENGLISH), sonst wird einfach die erste gefundene Datei genommen. Gibt
-    None zurück, wenn die Seite keine solchen Links enthält (z.B. eine
-    echte Login-Seite).
+    Gibt eine leere Liste zurück, wenn die Seite keine solchen Links enthält
+    (z.B. eine echte Login-Seite).
     """
-    links = []
+    files: list[tuple[str, str]] = []
+    seen_urls: set[str] = set()
     for link in _DL_LINK_RE.findall(html):
         link = link.replace("&amp;", "&").replace("http://", "https://", 1)
-        if link not in links:
-            links.append(link)
-    if not links:
+        if link in seen_urls:
+            continue
+        seen_urls.add(link)
+        if "filename=" not in link:
+            continue
+        filename = unquote(link.rsplit("filename=", 1)[-1])
+        files.append((filename, link))
+    return files
+
+
+def fetch_file_variants(url: str, cookies: dict | None = None) -> list[tuple[str, str]] | None:
+    """
+    Prüft, ob `url` (typischerweise eine Ravelry `/dls/{id}/{code}`-URL) eine
+    Mehrdateien-"Datei wählen"-Zwischenseite liefert, und gibt in diesem Fall
+    eine Liste von (dateiname, download_url) zurück – eine pro Datei-Variante,
+    mit dem ECHTEN Ravelry-Dateinamen. "Variante" meint hier nicht nur
+    Sprachübersetzungen, sondern jede Art zusätzlicher Datei, die Ravelry auf
+    der Chooser-Seite anbietet (z.B. "Easy Read"-Version, Strickdiagramm/
+    Chart, druckfreundliche Fassung). So kann die Auswahl – wie bei jedem
+    anderen Download – über ignore.txt gesteuert werden, statt eine Variante
+    im Code zu bevorzugen.
+
+    Gibt None zurück, wenn `url` bereits direkt ein PDF liefert (Pattern mit
+    nur einer Datei) oder keine erkennbare Chooser-Seite ist (z.B. eine
+    echte Login-Seite) – der Aufrufer soll dann den normalen
+    Einzel-Download-Pfad (download_pdf) verwenden.
+    """
+    try:
+        r = requests.get(url, timeout=30, cookies=cookies)
+        r.raise_for_status()
+    except requests.RequestException:
         return None
 
-    for link in links:
-        filename = link.rsplit("filename=", 1)[-1].upper()
-        if any(tag in filename for tag in ("_US_", "_UK_", "ENGLISH")):
-            return link
-    return links[0]
+    content_type = r.headers.get("Content-Type", "")
+    if _is_pdf_response(content_type, r.content[:16]):
+        return None
+    if "html" not in content_type.lower():
+        return None
+
+    files = _parse_chooser_links(r.text)
+    return files or None
 
 
-def download_pdf(
-    url: str,
-    target_path: str,
-    cookies: dict | None = None,
-    _follow_chooser: bool = True,
-) -> tuple[bool, str]:
+def download_pdf(url: str, target_path: str, cookies: dict | None = None) -> tuple[bool, str]:
     """
     Lädt eine Datei von url nach target_path herunter und validiert, dass es
     sich um ein PDF handelt (Signatur-Check + Content-Type).
@@ -124,9 +162,11 @@ def download_pdf(
     Downloads, die /account/login statt eines PDFs liefern würden ohne
     gültige Session – siehe ensure_browser_login()).
 
-    _follow_chooser: intern genutzt, um EINMALIG einer Ravelry-"Datei
-    wählen"-Zwischenseite zu folgen (siehe _extract_file_chooser_url). Nicht
-    von außen setzen.
+    Hinweis: Liefert `url` stattdessen eine Ravelry-"Datei wählen"-
+    Zwischenseite (mehrere Datei-Varianten, siehe fetch_file_variants()),
+    schlägt dieser Aufruf mit "Kein PDF" fehl – das ist beabsichtigt. Die
+    Variantenauswahl läuft über fetch_file_variants() + die normale
+    ignore.txt-Filterung beim Aufrufer, nicht hier.
 
     Gibt (True, infotext) oder (False, fehlertext) zurück.
     """
@@ -143,14 +183,6 @@ def download_pdf(
 
         content_type = r.headers.get("Content-Type", "")
         if not _is_pdf_response(content_type, first):
-            if _follow_chooser and "html" in content_type.lower():
-                body = first + b"".join(chunks)
-                html = body.decode("utf-8", errors="ignore")
-                chooser_url = _extract_file_chooser_url(html)
-                if chooser_url:
-                    return download_pdf(
-                        chooser_url, target_path, cookies=cookies, _follow_chooser=False
-                    )
             preview = first[:200].decode("utf-8", errors="ignore")
             return False, f"Kein PDF (Content-Type: {content_type})\n    Vorschau: {preview!r}"
 
