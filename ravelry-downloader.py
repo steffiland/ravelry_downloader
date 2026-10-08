@@ -78,6 +78,7 @@ danach lokal zwischengespeichert (.ravelry_session.json), sodass spätere
 Läufe nicht erneut einloggen müssen.
 """
 
+import argparse
 import json
 import os
 import time
@@ -108,6 +109,16 @@ EXCLUDED_LOG_FILE   = os.path.join(DOWNLOAD_DIR, "excluded_by_ignore.txt")
 # Browser-Cookies werden lazy (erst bei Bedarf) geholt und dann für den
 # restlichen Lauf wiederverwendet, damit nicht pro Datei neu eingeloggt wird.
 browser_cookies: dict | None = None
+
+# Dry-Run-Modus (--dry-run): try_download() führt dann KEINEN echten
+# Download durch (kein Netzwerk-GET auf die PDF-URL, kein Browser-Login),
+# sondern meldet nur, ob die Datei heruntergeladen ODER per ignore.txt
+# gefiltert würde. Alle anderen Schritte (Library abfragen, ignore.txt/
+# collections.txt auswerten, bei Mehrdatei-Pattern die echten Dateinamen
+# von der Ravelry-"Datei wählen"-Seite holen) laufen unverändert, damit die
+# Vorschau exakt die Dateinamen zeigt, die ignore.txt tatsächlich zu sehen
+# bekommt – zum gefahrlosen Review der eigenen ignore.txt.
+dry_run: bool = False
 
 # Sammelt alle in diesem Lauf nicht heruntergeladenen Dateinamen/Titel,
 # wird am Ende von main() als EXCLUDED_LOG_FILE geschrieben (siehe
@@ -333,6 +344,12 @@ def try_download(url: str, filename: str, label: str, ignore_patterns: list[str]
     is_ignored() (ignore.txt) wird hier für JEDEN Download geprüft, auch für
     Dateien innerhalb einer per collections.txt aktivierten Referenz-
     Collection – die beiden Mechanismen sind unabhängig und wirken beide.
+
+    Im Dry-Run-Modus (siehe modul-globales `dry_run`) wird NICHTS
+    heruntergeladen (kein Netzwerk-GET, kein Browser-Login) – es wird nur
+    gemeldet, ob die Datei heruntergeladen ODER per ignore.txt gefiltert
+    würde. 'downloaded' bedeutet im Dry-Run also "würde heruntergeladen",
+    nicht "wurde heruntergeladen".
     """
     global browser_cookies
 
@@ -341,7 +358,7 @@ def try_download(url: str, filename: str, label: str, ignore_patterns: list[str]
         clean_name += ".pdf"
 
     if is_ignored(clean_name, ignore_patterns):
-        print(f"  🚫 Gefiltert (ignore.txt): {clean_name}")
+        print(f"  🚫 {'Würde filtern' if dry_run else 'Gefiltert'} (ignore.txt): {clean_name}")
         excluded_this_run.append(f"{clean_name}  (Datei-Filter, {label})")
         return "skipped_ignore"
 
@@ -349,6 +366,10 @@ def try_download(url: str, filename: str, label: str, ignore_patterns: list[str]
     if os.path.exists(target_path):
         print(f"  ➜  Bereits vorhanden: {clean_name}")
         return "skipped_exists"
+
+    if dry_run:
+        print(f"  ✅ Würde laden ({label}): {clean_name}")
+        return "downloaded"
 
     print(f"  ⬇️  Lade herunter ({label}): {clean_name}")
     ok, msg, browser_cookies = download_with_login_fallback(url, target_path, browser_cookies)
@@ -780,12 +801,41 @@ def process_reference_collections(
 # Main
 # ---------------------------------------------------------------------------
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Lädt alle PDFs aus der eigenen Ravelry-Bibliothek herunter."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Simuliert den Lauf, ohne irgendetwas herunterzuladen (kein "
+            "Netzwerk-GET auf PDF-URLs, kein Browser-Login). Zeigt für jede "
+            "Datei nur, ob sie heruntergeladen oder per ignore.txt gefiltert "
+            "würde – zum gefahrlosen Review der eigenen ignore.txt. "
+            "collections.txt wird dabei NICHT verändert (neue Collections "
+            "werden nicht automatisch eingetragen); die Report-Dateien "
+            "skipped_non_downloadable.txt/excluded_by_ignore.txt werden "
+            "weiterhin geschrieben, da sie reine Logs ohne Steuerwirkung sind."
+        ),
+    )
+    return parser.parse_args()
+
+
 def main():
+    global dry_run
+    args = parse_args()
+    dry_run = args.dry_run
+
     excluded_this_run.clear()  # Log soll nur den aktuellen Lauf zeigen
     ensure_download_dir()
     ignore_patterns = load_ignore_patterns(IGNORE_FILE)
     username = get_current_username()
-    print(f"👤 Eingeloggt als: {username}\n")
+    print(f"👤 Eingeloggt als: {username}")
+    if dry_run:
+        print("🧪 DRY-RUN: Es wird NICHTS heruntergeladen, nur simuliert.\n")
+    else:
+        print()
 
     total_stats = {"downloaded": 0, "skipped_exists": 0, "skipped_ignore": 0, "error": 0}
 
@@ -813,7 +863,13 @@ def main():
 
             # Neue Collections automatisch (inaktiv) in collections.txt eintragen,
             # dann die Freigabeliste neu einlesen (enthält jetzt die frischen Einträge).
-            sync_new_reference_collections(reference_collections)
+            # Im Dry-Run wird collections.txt NICHT verändert (echte Mutation
+            # einer manuell gepflegten Steuerdatei) – eine neu gefundene,
+            # noch unbekannte Collection taucht dann einfach als "nicht
+            # aktiviert" in der Vorschau auf, statt automatisch angelegt zu
+            # werden.
+            if not dry_run:
+                sync_new_reference_collections(reference_collections)
             collection_includes = load_collection_includes(COLLECTIONS_FILE)
 
             stats = process_reference_collections(
@@ -831,10 +887,12 @@ def main():
 
     # --- Zusammenfassung ---
     print("\n" + "=" * 50)
-    print("✅ FERTIG")
-    print(f"  ⬇️  Neu heruntergeladen : {total_stats['downloaded']}")
+    print("✅ DRY-RUN FERTIG (nichts wurde heruntergeladen)" if dry_run else "✅ FERTIG")
+    label_downloaded = "Würde laden" if dry_run else "Neu heruntergeladen"
+    label_ignored = "Würde filtern" if dry_run else "Nicht heruntergeladen"
+    print(f"  ⬇️  {label_downloaded:22}: {total_stats['downloaded']}")
     print(f"  ➜   Bereits vorhanden  : {total_stats['skipped_exists']}")
-    print(f"  🚫  Nicht heruntergeladen: {total_stats['skipped_ignore']}")
+    print(f"  🚫  {label_ignored:22}: {total_stats['skipped_ignore']}")
     print(f"  ❌  Fehler             : {total_stats['error']}")
     print("=" * 50)
 
