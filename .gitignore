@@ -6,6 +6,7 @@ dist/
 wheels/
 *.egg-info
 *downloads/
+.agents
 
 # Virtual environments
 .venv
