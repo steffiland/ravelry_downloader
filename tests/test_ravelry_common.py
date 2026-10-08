@@ -1,10 +1,10 @@
 """
-Tests für die reinen Hilfsfunktionen in ravelry_common.py.
+Tests for the pure helper functions in ravelry_common.py.
 
-Netzwerk- und Browser-Interaktionen (api_get, ensure_browser_login) werden
-hier NICHT getestet, da sie echte Ravelry-Zugangsdaten bzw. einen echten
-Login-Flow erfordern. Diese Suite deckt die deterministische Logik ab:
-Dateinamen-Bereinigung, PDF-Signaturprüfung, Cookie-Validierung.
+Network and browser interactions (api_get, ensure_browser_login) are NOT
+tested here, since they require real Ravelry credentials or an actual
+login flow. This suite covers the deterministic logic: filename
+sanitization, PDF signature checking, cookie validation.
 """
 
 from __future__ import annotations
@@ -67,15 +67,16 @@ class TestCookiesLookValid:
 
 class TestParseChooserLinks:
     """
-    Für Pattern mit mehreren Dateien (z.B. Sprachvarianten) liefert
-    `/dls/{id}/{code}` keine PDF-Signatur, sondern eine HTML-"Datei
-    wählen"-Zwischenseite mit `/dl/{company}/{id}?filename=...`-Links – auch
-    OHNE Login-Problem. _parse_chooser_links() muss ALLE Dateien mit ihrem
-    echten Ravelry-Dateinamen zurückgeben, damit der Aufrufer sie wie jeden
-    anderen Download durch die normale ignore.txt-Filterung schicken kann –
-    KEINE Bevorzugung einer Variante im Code (siehe fetch_file_variants()).
-    Das gilt nicht nur für Sprachübersetzungen, sondern auch für andere
-    Datei-Varianten wie "Easy Read", Charts oder druckfreundliche Fassungen.
+    For patterns with multiple files (e.g. language variants),
+    `/dls/{id}/{code}` doesn't return a PDF signature, but an HTML "choose
+    file" intermediate page with `/dl/{company}/{id}?filename=...` links -
+    even WITHOUT a login problem. _parse_chooser_links() must return ALL
+    files with their real Ravelry filename, so the caller can send them
+    through the normal ignore.txt filtering like any other download - NO
+    preference for a variant hardcoded in the code (see
+    fetch_file_variants()). This applies not only to language
+    translations, but also to other file variants like "Easy Read",
+    charts, or print-friendly editions.
     """
 
     def test_returns_empty_list_for_real_login_page(self):
@@ -96,8 +97,8 @@ class TestParseChooserLinks:
         ]
 
     def test_extracts_all_language_variants_in_order(self):
-        """ALLE Sprachvarianten müssen zurückkommen, nicht nur eine
-        bevorzugte – die Auswahl passiert später über ignore.txt."""
+        """ALL language variants must come back, not just a preferred
+        one - the selection happens later via ignore.txt."""
         html = "".join(
             f'<a href="https://www.ravelry.com/dl/scheepjes/{code}'
             f'?filename=30.__{lang}__Alto_Mare_Wrap.pdf">x</a>'
@@ -123,8 +124,8 @@ class TestParseChooserLinks:
         assert url == "https://www.ravelry.com/dl/scheepjes/827389?filename=file.pdf"
 
     def test_deduplicates_repeated_links(self):
-        """Jeder Link taucht auf der echten Seite zweimal auf (Dateiname-
-        Text + Download-Icon) – darf aber nur einmal zurückkommen."""
+        """Every link appears twice on the real page (filename text +
+        download icon) - but must only come back once."""
         html = (
             '<a href="https://www.ravelry.com/dl/scheepjes/827389?filename=f.pdf">f.pdf</a>'
             '<a href="https://www.ravelry.com/dl/scheepjes/827389?filename=f.pdf">'

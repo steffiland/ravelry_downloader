@@ -14,7 +14,7 @@ from ravelry_common import api_get, get_current_username
 
 
 def fetch_all_projects(username: str) -> pd.DataFrame:
-    """Ruft alle Projekte eines Users ab (inkl. Paginierung) und gibt ein DataFrame zurück."""
+    """Fetches all of a user's projects (including pagination) and returns a DataFrame."""
     projects = []
     page = 1
     page_size = 50
@@ -28,20 +28,20 @@ def fetch_all_projects(username: str) -> pd.DataFrame:
 
         projects.extend(current_page_projects)
 
-        # Prüfen, ob es noch weitere Seiten gibt
+        # Check whether there are more pages
         paginator = data.get("paginator", {})
         if page >= paginator.get("page_count", 1):
             break
 
         page += 1
 
-    # In Pandas DataFrame umwandeln
+    # Convert to a Pandas DataFrame
     df = pd.DataFrame(projects)
     return df
 
 
 def fetch_all_stash(username: str) -> pd.DataFrame:
-    """Ruft den kompletten Stash eines Users ab und gibt ein DataFrame zurück."""
+    """Fetches a user's complete stash and returns a DataFrame."""
     stash_items = []
     page = 1
     page_size = 50
@@ -67,14 +67,14 @@ def fetch_all_stash(username: str) -> pd.DataFrame:
 
 if __name__ == "__main__":
     username = get_current_username()
-    print(f"Eingeloggt als: {username}\n")
+    print(f"Logged in as: {username}\n")
 
-    # --- 1. Projekte abrufen ---
-    print("Lade Projekte...")
+    # --- 1. Fetch projects ---
+    print("Loading projects...")
     df_projects = fetch_all_projects(username)
 
     if not df_projects.empty:
-        # Wichtige Spalten auswählen (falls vorhanden)
+        # Select important columns (if present)
         cols = [
             "name",
             "status_name",
@@ -85,16 +85,16 @@ if __name__ == "__main__":
         ]
         available_cols = [c for c in cols if c in df_projects.columns]
 
-        print("\n--- Projekte Übersicht ---")
+        print("\n--- Projects overview ---")
         print(df_projects[available_cols].head())
 
-        # Beispiel-Auswertung: Projekte nach Status zählen
+        # Example analysis: count projects by status
         if "status_name" in df_projects.columns:
-            print("\nProjekte nach Status:")
+            print("\nProjects by status:")
             print(df_projects["status_name"].value_counts())
 
-    # --- 2. Stash abrufen ---
-    print("\nLade Stash...")
+    # --- 2. Fetch stash ---
+    print("\nLoading stash...")
     df_stash = fetch_all_stash(username)
 
     if not df_stash.empty:
@@ -106,9 +106,9 @@ if __name__ == "__main__":
         ]
         available_stash_cols = [c for c in cols_stash if c in df_stash.columns]
 
-        print("\n--- Stash Übersicht ---")
+        print("\n--- Stash overview ---")
         print(df_stash[available_stash_cols].head())
 
-        # Optional: Als CSV/Excel exportieren
+        # Optional: export as CSV/Excel
         # df_projects.to_csv("ravelry_projects.csv", index=False)
         # df_stash.to_csv("ravelry_stash.csv", index=False)

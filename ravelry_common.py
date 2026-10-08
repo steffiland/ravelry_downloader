@@ -1,21 +1,20 @@
 """
 Ravelry Common Helper
 ======================
-Gemeinsam genutzte Funktionen für alle ravelry-*.py Scripts:
+Shared functions used by all ravelry-*.py scripts:
 
-  - REST-API-Zugriff (Basic Auth mit ACCESS_KEY/PERSONAL_KEY)
-  - PDF-Downloads inkl. Validierung (Signatur-/Content-Type-Check)
-  - Browser-gestützter Ravelry-Login via Playwright, für Downloads die
-    eine eingeloggte Browser-Session statt API-Keys benötigen
-    (kostenpflichtige Pattern/eBooks/Collections/Bundles, siehe
-    docs/ravelry-api-kb.md Abschnitt 10/11)
+  - REST API access (Basic Auth with ACCESS_KEY/PERSONAL_KEY)
+  - PDF downloads including validation (signature/content-type check)
+  - Browser-based Ravelry login via Playwright, for downloads that
+    require a logged-in browser session instead of API keys
+    (paid patterns/eBooks/collections/bundles, see
+    docs/ravelry-api-kb.md section 10/11)
 
-Session-Cookies werden nach erfolgreichem Login unter
-.ravelry_session.json zwischengespeichert (siehe .gitignore), damit nicht
-bei jedem Lauf neu eingeloggt werden muss.
+Session cookies are cached in .ravelry_session.json after a successful
+login (see .gitignore), so you don't have to log in again on every run.
 
-Dieses Modul ist KEIN eigenständiges Script – es wird von den anderen
-ravelry-*.py Dateien importiert.
+This module is NOT a standalone script - it is imported by the other
+ravelry-*.py files.
 """
 
 from __future__ import annotations
@@ -37,7 +36,7 @@ ACCESS_KEY   = os.getenv("RAVELRY_ACCESS_KEY")
 PERSONAL_KEY = os.getenv("RAVELRY_PERSONAL_KEY")
 
 if not ACCESS_KEY or not PERSONAL_KEY:
-    sys.exit("❌ RAVELRY_ACCESS_KEY oder RAVELRY_PERSONAL_KEY fehlt in der .env-Datei!")
+    sys.exit("❌ RAVELRY_ACCESS_KEY or RAVELRY_PERSONAL_KEY is missing from the .env file!")
 
 BASE_URL = "https://api.ravelry.com"
 AUTH     = (ACCESS_KEY, PERSONAL_KEY)
@@ -46,24 +45,24 @@ SESSION_FILE = Path(__file__).parent / ".ravelry_session.json"
 LOGIN_URL    = "https://www.ravelry.com/account/login"
 
 
-# ── REST-API ────────────────────────────────────────────────────────────────
+# ── REST API ────────────────────────────────────────────────────────────────
 
 def api_get(path: str, params: dict | None = None) -> dict:
-    """GET gegen die Ravelry-REST-API mit Basic Auth (ACCESS_KEY/PERSONAL_KEY)."""
+    """GET against the Ravelry REST API with Basic Auth (ACCESS_KEY/PERSONAL_KEY)."""
     r = requests.get(f"{BASE_URL}{path}", auth=AUTH, params=params, timeout=30)
     r.raise_for_status()
     return r.json()
 
 
 def get_current_username() -> str:
-    """Ermittelt den Benutzernamen des API-Inhabers."""
+    """Determines the username of the API key owner."""
     return api_get("/current_user.json")["user"]["username"]
 
 
-# ── Dateinamen / Downloads ───────────────────────────────────────────────────
+# ── Filenames / Downloads ────────────────────────────────────────────────────
 
 def sanitize_filename(filename: str) -> str:
-    """Bereinigt Dateinamen von Zeichen, die Dateisysteme nicht mögen."""
+    """Strips characters from a filename that filesystems don't like."""
     return re.sub(r'[\\/*?:"<>|]', "_", filename)
 
 
@@ -71,40 +70,39 @@ def _is_pdf_response(content_type: str, first_chunk: bytes) -> bool:
     return first_chunk.startswith(b"%PDF-") or "pdf" in content_type.lower()
 
 
-# Direkte Datei-Download-Links auf einer Ravelry-"Datei wählen"-Zwischenseite,
-# z.B. <a href="https://www.ravelry.com/dl/scheepjes/827394?filename=....pdf">
+# Direct file download links on a Ravelry "choose file" intermediate page,
+# e.g. <a href="https://www.ravelry.com/dl/scheepjes/827394?filename=....pdf">
 _DL_LINK_RE = re.compile(r'href="(https?://www\.ravelry\.com/dl/[^"]+)"')
 
 
 def _parse_chooser_links(html: str) -> list[tuple[str, str]]:
     """
-    Parst eine Ravelry-"Datei wählen"-Zwischenseite und gibt eine Liste von
-    (dateiname, download_url) zurück – eine pro gefundener Datei, in der
-    Reihenfolge, in der sie auf der Seite stehen. dateiname ist der ECHTE
-    Ravelry-Dateiname (aus dem `filename=`-Query-Parameter, URL-dekodiert,
-    z.B. "30.__NL__Alto_Mare_Wrap.pdf") – damit nachgelagerte Aufrufer die
-    übliche ignore.txt-Filterung (is_ignored) pro Datei anwenden können,
-    statt irgendeine Variante im Code hart zu bevorzugen.
+    Parses a Ravelry "choose file" intermediate page and returns a list of
+    (filename, download_url) tuples - one per file found, in the order they
+    appear on the page. filename is the REAL Ravelry filename (from the
+    `filename=` query parameter, URL-decoded, e.g.
+    "30.__NL__Alto_Mare_Wrap.pdf") - so that downstream callers can apply the
+    usual ignore.txt filtering (is_ignored) per file, instead of hardcoding
+    a preference for any particular variant in the code.
 
-    Hintergrund: `download_location.url` (bzw. die daraus abgeleitete
-    `/dls/{id}/{code}`-URL) liefert bei einem Pattern mit NUR EINER Datei
-    direkt das PDF. Hat das Pattern aber mehrere Dateien, liefert dieselbe
-    URL stattdessen eine HTML-Seite mit je einem
-    `/dl/{company}/{id}?filename=...`-Link pro Datei. "Mehrere Dateien" ist
-    NICHT auf Sprachübersetzungen beschränkt (die bei Referenz-Collections
-    wie Scheepjes "YARN - The After Party" am häufigsten vorkommen) – es gibt
-    z.B. auch "Easy Read"-Versionen, Strickdiagramme/Charts als separate
-    Datei, oder druckfreundliche Varianten. Diese Funktion unterscheidet
-    nicht zwischen den Varianten-Typen, sondern sammelt schlicht ALLE
-    gefundenen Dateien; welche davon tatsächlich geladen werden, entscheidet
-    ignore.txt beim Aufrufer.
+    Background: `download_location.url` (or the derived `/dls/{id}/{code}`
+    URL) returns the PDF directly for a pattern with ONLY ONE file. But if
+    the pattern has multiple files, the same URL instead returns an HTML page
+    with one `/dl/{company}/{id}?filename=...` link per file. "Multiple
+    files" is NOT limited to language translations (which are the most
+    common case for reference collections like Scheepjes "YARN - The After
+    Party") - there are also, for example, "Easy Read" versions, knitting
+    charts as a separate file, or print-friendly variants. This function
+    doesn't distinguish between variant types; it simply collects ALL files
+    found. Which of them actually get downloaded is decided by ignore.txt
+    on the caller side.
 
-    Das sieht für die Content-Type-Prüfung wie eine fehlgeschlagene
-    Login-Weiterleitung aus, ist aber eine normale Zwischenseite und braucht
-    KEINEN Login – die Links sind auch ohne Session sichtbar.
+    This can look like a failed login redirect from the content-type check's
+    point of view, but it's a normal intermediate page and requires NO
+    login - the links are visible even without a session.
 
-    Gibt eine leere Liste zurück, wenn die Seite keine solchen Links enthält
-    (z.B. eine echte Login-Seite).
+    Returns an empty list if the page contains no such links (e.g. an
+    actual login page).
     """
     files: list[tuple[str, str]] = []
     seen_urls: set[str] = set()
@@ -122,20 +120,20 @@ def _parse_chooser_links(html: str) -> list[tuple[str, str]]:
 
 def fetch_file_variants(url: str, cookies: dict | None = None) -> list[tuple[str, str]] | None:
     """
-    Prüft, ob `url` (typischerweise eine Ravelry `/dls/{id}/{code}`-URL) eine
-    Mehrdateien-"Datei wählen"-Zwischenseite liefert, und gibt in diesem Fall
-    eine Liste von (dateiname, download_url) zurück – eine pro Datei-Variante,
-    mit dem ECHTEN Ravelry-Dateinamen. "Variante" meint hier nicht nur
-    Sprachübersetzungen, sondern jede Art zusätzlicher Datei, die Ravelry auf
-    der Chooser-Seite anbietet (z.B. "Easy Read"-Version, Strickdiagramm/
-    Chart, druckfreundliche Fassung). So kann die Auswahl – wie bei jedem
-    anderen Download – über ignore.txt gesteuert werden, statt eine Variante
-    im Code zu bevorzugen.
+    Checks whether `url` (typically a Ravelry `/dls/{id}/{code}` URL) returns
+    a multi-file "choose file" intermediate page, and if so, returns a list
+    of (filename, download_url) tuples - one per file variant, with the
+    REAL Ravelry filename. "Variant" here doesn't just mean language
+    translations, but any kind of extra file Ravelry offers on the chooser
+    page (e.g. an "Easy Read" version, a knitting chart, or a print-friendly
+    edition). This lets the selection be controlled via ignore.txt, just
+    like any other download, instead of hardcoding a preference for a
+    variant in the code.
 
-    Gibt None zurück, wenn `url` bereits direkt ein PDF liefert (Pattern mit
-    nur einer Datei) oder keine erkennbare Chooser-Seite ist (z.B. eine
-    echte Login-Seite) – der Aufrufer soll dann den normalen
-    Einzel-Download-Pfad (download_pdf) verwenden.
+    Returns None if `url` already returns a PDF directly (pattern with only
+    one file) or isn't a recognizable chooser page (e.g. an actual login
+    page) - the caller should then use the normal single-file download path
+    (download_pdf).
     """
     try:
         r = requests.get(url, timeout=30, cookies=cookies)
@@ -155,20 +153,20 @@ def fetch_file_variants(url: str, cookies: dict | None = None) -> list[tuple[str
 
 def download_pdf(url: str, target_path: str, cookies: dict | None = None) -> tuple[bool, str]:
     """
-    Lädt eine Datei von url nach target_path herunter und validiert, dass es
-    sich um ein PDF handelt (Signatur-Check + Content-Type).
+    Downloads a file from url to target_path and validates that it is
+    actually a PDF (signature check + content-type).
 
-    cookies: optionale Browser-Session-Cookies (für kostenpflichtige
-    Downloads, die /account/login statt eines PDFs liefern würden ohne
-    gültige Session – siehe ensure_browser_login()).
+    cookies: optional browser session cookies (for paid downloads, which
+    would return /account/login instead of a PDF without a valid session -
+    see ensure_browser_login()).
 
-    Hinweis: Liefert `url` stattdessen eine Ravelry-"Datei wählen"-
-    Zwischenseite (mehrere Datei-Varianten, siehe fetch_file_variants()),
-    schlägt dieser Aufruf mit "Kein PDF" fehl – das ist beabsichtigt. Die
-    Variantenauswahl läuft über fetch_file_variants() + die normale
-    ignore.txt-Filterung beim Aufrufer, nicht hier.
+    Note: if `url` instead returns a Ravelry "choose file" intermediate page
+    (multiple file variants, see fetch_file_variants()), this call fails
+    with "No PDF" - that is intentional. Variant selection goes through
+    fetch_file_variants() plus the normal ignore.txt filtering on the
+    caller side, not here.
 
-    Gibt (True, infotext) oder (False, fehlertext) zurück.
+    Returns (True, info_text) or (False, error_text).
     """
     if not target_path.lower().endswith(".pdf"):
         target_path += ".pdf"
@@ -179,12 +177,12 @@ def download_pdf(url: str, target_path: str, cookies: dict | None = None) -> tup
         chunks = r.iter_content(chunk_size=8192)
         first = next(chunks, None)
         if not first:
-            return False, "Datei leer (0 Bytes)"
+            return False, "File is empty (0 bytes)"
 
         content_type = r.headers.get("Content-Type", "")
         if not _is_pdf_response(content_type, first):
             preview = first[:200].decode("utf-8", errors="ignore")
-            return False, f"Kein PDF (Content-Type: {content_type})\n    Vorschau: {preview!r}"
+            return False, f"Not a PDF (Content-Type: {content_type})\n    Preview: {preview!r}"
 
         with open(target_path, "wb") as f:
             f.write(first)
@@ -198,16 +196,16 @@ def download_pdf(url: str, target_path: str, cookies: dict | None = None) -> tup
         return False, str(e)
 
 
-# ── Browser-Login (Playwright) ──────────────────────────────────────────────
+# ── Browser login (Playwright) ───────────────────────────────────────────────
 #
-# Kostenpflichtige Downloads laufen über /download/{id}/checkout-URLs, die
-# eine eingeloggte Browser-Session (Cookie-Login) erwarten. Die REST-API-Keys
-# (Basic Auth gegen api.ravelry.com) werden dort NICHT akzeptiert.
+# Paid downloads go through /download/{id}/checkout URLs, which expect a
+# logged-in browser session (cookie login). The REST API keys (Basic Auth
+# against api.ravelry.com) are NOT accepted there.
 #
-# ensure_browser_login() öffnet bei Bedarf einen sichtbaren Chromium-Browser,
-# lässt den Nutzer sich manuell einloggen (2FA-fähig, keine Passwort-Eingabe
-# im Script), und speichert anschließend die Session-Cookies lokal ab, damit
-# nachfolgende Downloads/Läufe sie wiederverwenden können.
+# ensure_browser_login() opens a visible Chromium browser when needed, lets
+# the user log in manually (2FA-capable, no password entry in the script),
+# and then saves the session cookies locally so subsequent downloads/runs
+# can reuse them.
 
 def _load_cached_cookies() -> list[dict] | None:
     if not SESSION_FILE.exists():
@@ -224,14 +222,14 @@ def _save_cookies(cookies: list[dict]) -> None:
 
 
 def _cookies_look_valid(cookies: list[dict]) -> bool:
-    """Grobe Prüfung: sind überhaupt Ravelry-Cookies da und nicht abgelaufen?"""
+    """Rough check: are there any Ravelry cookies at all, and are they not expired?"""
     if not cookies:
         return False
     now = time.time()
     ravelry_cookies = [c for c in cookies if "ravelry.com" in c.get("domain", "")]
     if not ravelry_cookies:
         return False
-    # Mindestens ein Cookie ohne Ablauf oder mit Ablauf in der Zukunft
+    # At least one cookie with no expiry or with an expiry in the future
     return any(c.get("expires", -1) == -1 or c.get("expires", 0) > now for c in ravelry_cookies)
 
 
@@ -240,7 +238,7 @@ def _cookies_to_requests_dict(cookies: list[dict]) -> dict:
 
 
 def _verify_session(cookies: list[dict]) -> bool:
-    """Prüft per echtem Request, ob die Cookies tatsächlich eingeloggt sind."""
+    """Checks with an actual request whether the cookies are really logged in."""
     try:
         r = requests.get(
             "https://www.ravelry.com/account/login",
@@ -248,8 +246,8 @@ def _verify_session(cookies: list[dict]) -> bool:
             allow_redirects=False,
             timeout=15,
         )
-        # Wer bereits eingeloggt ist, wird von /account/login weggeleitet (302)
-        # statt die Login-Seite (200) zu bekommen.
+        # Anyone already logged in gets redirected away from /account/login (302)
+        # instead of getting the login page (200).
         return r.status_code in (301, 302, 303)
     except requests.RequestException:
         return False
@@ -257,39 +255,39 @@ def _verify_session(cookies: list[dict]) -> bool:
 
 def ensure_browser_login(force: bool = False) -> dict:
     """
-    Stellt eine gültige Ravelry-Browser-Session sicher und gibt die Cookies
-    als requests-kompatibles dict zurück ({name: value}).
+    Ensures a valid Ravelry browser session and returns the cookies as a
+    requests-compatible dict ({name: value}).
 
-    Ablauf:
-      1. Falls eine gecachte, noch gültige Session existiert (und force=False),
-         wird sie direkt zurückgegeben – kein Browser nötig.
-      2. Sonst wird ein sichtbarer Chromium-Browser gestartet, die
-         Ravelry-Login-Seite geöffnet und auf den manuellen Login gewartet
-         (der Nutzer gibt Username/Passwort/2FA selbst im Browserfenster ein).
-      3. Nach erfolgreichem Login werden die Cookies gespeichert und
-         zurückgegeben.
+    Flow:
+      1. If a cached, still-valid session exists (and force=False), it is
+         returned directly - no browser needed.
+      2. Otherwise, a visible Chromium browser is launched, the Ravelry
+         login page is opened, and the script waits for the manual login
+         (the user enters username/password/2FA themselves in the browser
+         window).
+      3. After a successful login, the cookies are saved and returned.
 
-    Erfordert das 'playwright'-Package und installierte Browser-Binaries
-    (einmalig: `uv run --project . python3 -m playwright install chromium`).
+    Requires the 'playwright' package and installed browser binaries
+    (one-time setup: `uv run --project . python3 -m playwright install chromium`).
     """
     if not force:
         cached = _load_cached_cookies()
         if cached and _cookies_look_valid(cached) and _verify_session(cached):
-            print("🔐 Vorhandene Browser-Session ist noch gültig – kein Login nötig.")
+            print("🔐 Existing browser session is still valid - no login needed.")
             return _cookies_to_requests_dict(cached)
 
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         sys.exit(
-            "❌ Für den Browser-Login wird das 'playwright'-Package benötigt.\n"
-            "   Installieren mit:  uv add playwright\n"
-            "   Browser-Binaries:  uv run --project . python3 -m playwright install chromium"
+            "❌ The 'playwright' package is required for browser login.\n"
+            "   Install with:      uv add playwright\n"
+            "   Browser binaries:  uv run --project . python3 -m playwright install chromium"
         )
 
-    print("\n🌐 Öffne Browser für den Ravelry-Login …")
-    print("   Bitte im Browserfenster einloggen (Username, Passwort, ggf. 2FA).")
-    print("   Das Script wartet automatisch, bis der Login abgeschlossen ist.\n")
+    print("\n🌐 Opening browser for Ravelry login …")
+    print("   Please log in in the browser window (username, password, 2FA if needed).")
+    print("   The script will automatically wait until the login is complete.\n")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
@@ -297,30 +295,30 @@ def ensure_browser_login(force: bool = False) -> dict:
         page = context.new_page()
         page.goto(LOGIN_URL, wait_until="networkidle")
 
-        # Warten, bis wir die Login-Seite verlassen haben (= eingeloggt).
-        # Timeout bewusst hoch (5 Minuten) für 2FA / langsames Tippen.
+        # Wait until we've left the login page (= logged in).
+        # Timeout is intentionally high (5 minutes) for 2FA / slow typing.
         try:
             page.wait_for_url(lambda url: "/account/login" not in url, timeout=300_000)
         except Exception:
             browser.close()
-            sys.exit("❌ Login-Timeout (5 Minuten) – kein erfolgreicher Login erkannt.")
+            sys.exit("❌ Login timeout (5 minutes) - no successful login detected.")
 
         cookies = context.cookies()
         browser.close()
 
     if not _cookies_look_valid(cookies):
-        sys.exit("❌ Nach dem Login wurden keine gültigen Ravelry-Cookies gefunden.")
+        sys.exit("❌ No valid Ravelry cookies found after login.")
 
     _save_cookies(cookies)
-    print(f"✅ Login erfolgreich. Session gespeichert in {SESSION_FILE.name}\n")
+    print(f"✅ Login successful. Session saved to {SESSION_FILE.name}\n")
     return _cookies_to_requests_dict(cookies)
 
 
 def clear_browser_session() -> None:
-    """Löscht die gecachte Browser-Session (z.B. bei Logout-Problemen)."""
+    """Deletes the cached browser session (e.g. in case of logout issues)."""
     if SESSION_FILE.exists():
         SESSION_FILE.unlink()
-        print(f"🗑️  Session-Datei {SESSION_FILE.name} gelöscht.")
+        print(f"🗑️  Session file {SESSION_FILE.name} deleted.")
 
 
 def download_with_login_fallback(
@@ -329,20 +327,20 @@ def download_with_login_fallback(
     browser_cookies: dict | None,
 ) -> tuple[bool, str, dict | None]:
     """
-    Lädt ein PDF herunter. Falls die Antwort kein PDF ist (HTML-Login-Seite)
-    UND noch keine Browser-Cookies übergeben wurden, wird automatisch
-    ensure_browser_login() aufgerufen und der Download einmal wiederholt.
+    Downloads a PDF. If the response isn't a PDF (HTML login page) AND no
+    browser cookies have been passed in yet, ensure_browser_login() is
+    called automatically and the download is retried once.
 
-    Gibt (ok, info, cookies) zurück – cookies ggf. neu erzeugt, damit der
-    Aufrufer sie für weitere Downloads im selben Lauf wiederverwenden kann.
+    Returns (ok, info, cookies) - cookies may be newly created so the
+    caller can reuse them for further downloads within the same run.
     """
     ok, msg = download_pdf(url, target_path, cookies=browser_cookies)
     if ok or browser_cookies is not None:
         return ok, msg, browser_cookies
 
-    # Kein PDF und noch kein Login versucht -> evtl. braucht's eine Session
-    if "Kein PDF" in msg:
-        print("   ℹ️  Kein PDF ohne Login erhalten – starte Browser-Login …")
+    # Not a PDF and no login attempted yet -> might need a session
+    if "Not a PDF" in msg:
+        print("   ℹ️  Didn't get a PDF without login - starting browser login …")
         browser_cookies = ensure_browser_login()
         ok, msg = download_pdf(url, target_path, cookies=browser_cookies)
         return ok, msg, browser_cookies

@@ -10,72 +10,72 @@
 """
 Ravelry PDF Downloader
 ======================
-Lädt alle PDFs aus der eigenen Ravelry-Bibliothek herunter:
+Downloads all PDFs from your own Ravelry library:
 
-  1. Volumes (Bücher, Magazine, Collections mit eigenem PDF-Bundle):
+  1. Volumes (books, magazines, collections with their own PDF bundle):
      → library/search.json?type=pdf → volumes[].volume_attachments[].ravelry_download_url
 
-  2. Einzeln gekaufte Ravelry-Pattern:
-     → library/search.json (ohne type) → Items mit pattern_id, patterns_count==1
+  2. Individually purchased Ravelry patterns:
+     → library/search.json (no type filter) → items with pattern_id, patterns_count==1
        → /patterns/{id}.json → volumes_in_library → volume_attachments[].ravelry_download_url
 
-  3. Referenz-Collections (patterns_count > 1, aber has_downloads=False):
-     Das sind Collections OHNE eigenes gebündeltes PDF – die Mitglieder sind
-     stattdessen einzeln verlinkte Pattern (meist kostenlose Ravelry-Downloads,
-     z.B. Scheepjes "YARN - The After Party"). Diese werden über
-     /pattern_sources/{id}/patterns.json aufgelistet und einzeln geladen.
+  3. Reference collections (patterns_count > 1, but has_downloads=False):
+     These are collections WITHOUT their own bundled PDF - the members are
+     instead individually linked patterns (usually free Ravelry downloads,
+     e.g. Scheepjes "YARN - The After Party"). These are listed via
+     /pattern_sources/{id}/patterns.json and downloaded individually.
 
-STEUERUNG ÜBER ZWEI GETRENNTE DATEIEN (unterschiedliche Logik!):
+CONTROLLED BY TWO SEPARATE FILES (with different logic!):
 
-  ravelry_downloads/ignore.txt – EXCLUDE-Logik, gilt für ALLE Downloads
-    Eine Zeile = Substring-Filter gegen den Ziel-DATEINAMEN. Alles wird
-    geladen, AUSSER was hier als Zeile steht (z.B. '_NL.pdf' für
-    niederländische Versionen). Gilt überall – auch für Dateien innerhalb
-    einer per collections.txt aktivierten Referenz-Collection.
+  ravelry_downloads/ignore.txt - EXCLUDE logic, applies to ALL downloads
+    One line = substring filter against the target FILENAME. Everything is
+    downloaded EXCEPT what's listed here (e.g. '_NL.pdf' for Dutch
+    versions). Applies everywhere - including files within a reference
+    collection activated via collections.txt.
 
-  ravelry_downloads/collections.txt – INCLUDE-Logik, nur für Variante 3
-    Eine Zeile = 'collection:<id-oder-teiltitel>'. Nur AKTIVE (nicht
-    auskommentierte) Zeilen schalten den Download dieser Collection frei:
-      collection:213142                 <- AKTIV, wird heruntergeladen
-      #collection:213142                 <- INAKTIV (Standard für neue Funde)
-    Zum Aktivieren einfach das führende '#' entfernen. Neu gefundene
-    Collections werden bei jedem Lauf automatisch INAKTIV ergänzt, sodass
-    hier immer eine vollständige, durchsuchbare Katalogliste ALLER jemals
-    gefundenen Referenz-Collections zum Review entsteht – ohne dass
-    versehentlich etwas heruntergeladen wird. Welche IDs schon einmal in
-    den Katalog eingetragen wurden, merkt sich das Script in
-    ravelry_downloads/.collection_sync.json, damit eine bereits bekannte
-    Collection beim nächsten Lauf nicht erneut angehängt wird (unabhängig
-    davon, ob du sie aktiviert oder deaktiviert gelassen hast).
+  ravelry_downloads/collections.txt - INCLUDE logic, only for variant 3
+    One line = 'collection:<id-or-partial-title>'. Only ACTIVE (not
+    commented out) lines enable the download of that collection:
+      collection:213142                 <- ACTIVE, will be downloaded
+      #collection:213142                 <- INACTIVE (default for new finds)
+    To activate, simply remove the leading '#'. Newly found collections
+    are automatically appended as INACTIVE on every run, so this file
+    always builds a complete, searchable catalog of ALL reference
+    collections ever found, for review - without anything being
+    downloaded by accident. The script remembers which IDs have already
+    been added to the catalog in ravelry_downloads/.collection_sync.json,
+    so a collection that is already known doesn't get appended again on
+    the next run (regardless of whether you left it activated or
+    deactivated).
 
-VERARBEITUNGSREIHENFOLGE (main()):
-  Schritt 1: Volumes mit eigenem PDF-Bundle (process_volumes)
-  Schritt 2: Einzeln gekaufte Pattern (process_individual_patterns)
-  Schritt 3: Referenz-Collections, deren Mitglieder einzeln (process_reference_collections)
-  Schritt 4: Transparenz-Report für Items ohne Download-Pfad (report_unhandled_items)
-  Schritt 5: Log der per ignore.txt gefilterten Einträge (write_excluded_log)
-  Innerhalb jeder Stufe läuft es in der Reihenfolge, in der die Ravelry-API
-  die Library-Einträge paginiert zurückgibt (keine eigene Sortierung durch
-  dieses Script).
+PROCESSING ORDER (main()):
+  Step 1: Volumes with their own PDF bundle (process_volumes)
+  Step 2: Individually purchased patterns (process_individual_patterns)
+  Step 3: Reference collections, members downloaded individually (process_reference_collections)
+  Step 4: Transparency report for items without a download path (report_unhandled_items)
+  Step 5: Log of entries filtered by ignore.txt (write_excluded_log)
+  Within each stage, processing follows the order in which the Ravelry API
+  paginates the library entries (this script doesn't apply its own sort
+  order).
 
-LOG-DATEIEN (werden bei JEDEM Lauf überschrieben, zeigen also den Stand
-des letzten Laufs, nicht kumulativ über mehrere Läufe):
+LOG FILES (overwritten on EVERY run, so they show the state of the last
+run, not a cumulative history across multiple runs):
   - ravelry_downloads/skipped_non_downloadable.txt
-    Library-Einträge ohne erkennbaren Download-Pfad (Schritt 4).
+    Library entries without a recognizable download path (step 4).
   - ravelry_downloads/excluded_by_ignore.txt
-    Dateien/Collections, die in DIESEM Lauf per ignore.txt bzw.
-    collections.txt NICHT heruntergeladen wurden (Schritt 5). Reines Log,
-    kein Steuer-Mechanismus – zum Ändern selbst ignore.txt/collections.txt
-    bearbeiten.
+    Files/collections that were NOT downloaded in THIS run due to
+    ignore.txt or collections.txt (step 5). A pure log, not a control
+    mechanism - edit ignore.txt/collections.txt directly to change
+    behavior.
 
-KOSTENPFLICHTIGE DOWNLOADS:
-----------------------------
-Deren URLs verlangen eine eingeloggte Browser-Session statt der REST-API-Keys.
-Liefert ein Download-Versuch eine HTML-Login-Seite statt eines PDFs, öffnet
-dieses Script automatisch einen sichtbaren Browser (Playwright) zum manuellen
-Einloggen – siehe ravelry_common.ensure_browser_login(). Die Session wird
-danach lokal zwischengespeichert (.ravelry_session.json), sodass spätere
-Läufe nicht erneut einloggen müssen.
+PAID DOWNLOADS:
+----------------
+Their URLs require a logged-in browser session instead of the REST API
+keys. If a download attempt returns an HTML login page instead of a PDF,
+this script automatically opens a visible browser (Playwright) for manual
+login - see ravelry_common.ensure_browser_login(). The session is then
+cached locally (.ravelry_session.json), so later runs don't need to log
+in again.
 """
 
 import argparse
@@ -97,58 +97,58 @@ IGNORE_FILE          = os.path.join(DOWNLOAD_DIR, "ignore.txt")
 COLLECTIONS_FILE     = os.path.join(DOWNLOAD_DIR, "collections.txt")
 COLLECTION_SYNC_FILE = os.path.join(DOWNLOAD_DIR, ".collection_sync.json")
 
-# Log-Dateien (werden bei JEDEM Lauf überschrieben, zeigen also immer den
-# Stand des letzten Laufs – kein Steuer-Mechanismus, nur Transparenz):
-#   - SKIPPED_REPORT_FILE: Library-Einträge ohne erkennbaren Download-Pfad
-#     (siehe report_unhandled_items())
-#   - EXCLUDED_LOG_FILE:   Dateien/Collections, die in diesem Lauf NICHT
-#     heruntergeladen wurden (per ignore.txt ODER collections.txt)
+# Log files (overwritten on EVERY run, so they always show the state of
+# the last run - not a control mechanism, just transparency):
+#   - SKIPPED_REPORT_FILE: library entries without a recognizable download
+#     path (see report_unhandled_items())
+#   - EXCLUDED_LOG_FILE:   files/collections that were NOT downloaded in
+#     this run (via ignore.txt OR collections.txt)
 SKIPPED_REPORT_FILE = os.path.join(DOWNLOAD_DIR, "skipped_non_downloadable.txt")
 EXCLUDED_LOG_FILE   = os.path.join(DOWNLOAD_DIR, "excluded_by_ignore.txt")
 
-# Browser-Cookies werden lazy (erst bei Bedarf) geholt und dann für den
-# restlichen Lauf wiederverwendet, damit nicht pro Datei neu eingeloggt wird.
+# Browser cookies are fetched lazily (only when needed) and then reused for
+# the rest of the run, so there's no need to log in again for every file.
 browser_cookies: dict | None = None
 
-# Dry-Run-Modus (--dry-run): try_download() führt dann KEINEN echten
-# Download durch (kein Netzwerk-GET auf die PDF-URL, kein Browser-Login),
-# sondern meldet nur, ob die Datei heruntergeladen ODER per ignore.txt
-# gefiltert würde. Alle anderen Schritte (Library abfragen, ignore.txt/
-# collections.txt auswerten, bei Mehrdatei-Pattern die echten Dateinamen
-# von der Ravelry-"Datei wählen"-Seite holen) laufen unverändert, damit die
-# Vorschau exakt die Dateinamen zeigt, die ignore.txt tatsächlich zu sehen
-# bekommt – zum gefahrlosen Review der eigenen ignore.txt.
+# Dry-run mode (--dry-run): try_download() then performs NO real download
+# (no network GET on the PDF URL, no browser login), and only reports
+# whether the file would be downloaded OR filtered by ignore.txt. All other
+# steps (querying the library, evaluating ignore.txt/collections.txt,
+# fetching the real filenames from the Ravelry "choose file" page for
+# multi-file patterns) run unchanged, so the preview shows exactly the
+# filenames that ignore.txt actually gets to see - for a safe review of
+# your own ignore.txt.
 dry_run: bool = False
 
-# Sammelt alle in diesem Lauf nicht heruntergeladenen Dateinamen/Titel,
-# wird am Ende von main() als EXCLUDED_LOG_FILE geschrieben (siehe
-# write_excluded_log()). Modul-globaler Zustand analog zu browser_cookies.
+# Collects all filenames/titles not downloaded in this run, written out at
+# the end of main() as EXCLUDED_LOG_FILE (see write_excluded_log()).
+# Module-global state, analogous to browser_cookies.
 excluded_this_run: list[str] = []
 
 
 # ---------------------------------------------------------------------------
-# ignore.txt – Dateinamen-Filter (EXCLUDE-Logik, gilt für ALLE Downloads)
+# ignore.txt - filename filter (EXCLUDE logic, applies to ALL downloads)
 # ---------------------------------------------------------------------------
 
 def load_ignore_patterns(ignore_filepath: str) -> list[str]:
     """
-    Lädt Dateinamen-Ignorier-Muster aus ignore.txt.
-    Erstellt eine Beispiel-Datei, falls noch keine existiert.
+    Loads filename ignore patterns from ignore.txt.
+    Creates an example file if none exists yet.
 
-    EXCLUDE-Logik: eine Zeile = Substring-Filter gegen den Ziel-DATEINAMEN.
-    Alles wird geladen, AUSSER was hier als Zeile steht. Gilt für JEDEN
-    Download (Volumes, Einzelpattern, UND Dateien innerhalb einer per
-    collections.txt aktivierten Referenz-Collection).
+    EXCLUDE logic: one line = substring filter against the target
+    FILENAME. Everything is downloaded EXCEPT what's listed here. Applies
+    to EVERY download (volumes, individual patterns, AND files within a
+    reference collection activated via collections.txt).
     """
     if not os.path.exists(ignore_filepath):
         os.makedirs(os.path.dirname(ignore_filepath), exist_ok=True)
         default_content = (
-            "# Trage hier Dateinamen oder Namensbestandteile ein, die NICHT\n"
-            "# heruntergeladen werden sollen. Zeilen mit '#' = Kommentar.\n"
-            "# Gilt für ALLE Downloads, auch innerhalb aktivierter Collections\n"
-            "# (siehe collections.txt).\n"
+            "# List filenames or name fragments here that should NOT be\n"
+            "# downloaded. Lines starting with '#' are comments.\n"
+            "# Applies to ALL downloads, including within activated collections\n"
+            "# (see collections.txt).\n"
             "#\n"
-            "# Beispiele für Sprach-Ausschlüsse:\n"
+            "# Examples for language exclusions:\n"
             "# _NL.pdf\n"
             "# _FR.pdf\n"
             "# _ES.pdf\n"
@@ -157,7 +157,7 @@ def load_ignore_patterns(ignore_filepath: str) -> list[str]:
         )
         with open(ignore_filepath, "w", encoding="utf-8") as f:
             f.write(default_content)
-        print(f"ℹ️  Neue Ignorier-Datei erstellt: '{ignore_filepath}'")
+        print(f"ℹ️  New ignore file created: '{ignore_filepath}'")
         return []
 
     filename_patterns = []
@@ -166,55 +166,56 @@ def load_ignore_patterns(ignore_filepath: str) -> list[str]:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            # Inline-Kommentare abschneiden
+            # Strip inline comments
             line_without_comment = line.split("#", 1)[0].strip()
             if line_without_comment:
                 filename_patterns.append(line_without_comment.lower())
 
     if filename_patterns:
-        print(f"ℹ️  {len(filename_patterns)} Datei-Ignorier-Muster aus '{ignore_filepath}' geladen.")
+        print(f"ℹ️  Loaded {len(filename_patterns)} filename ignore pattern(s) from '{ignore_filepath}'.")
     return filename_patterns
 
 
 def is_ignored(filename: str, ignore_patterns: list[str]) -> bool:
-    """Prüft, ob ein Dateiname mit einem der Ignorier-Muster übereinstimmt."""
+    """Checks whether a filename matches any of the ignore patterns."""
     filename_lower = filename.lower()
     return any(p in filename_lower for p in ignore_patterns)
 
 
 # ---------------------------------------------------------------------------
-# collections.txt – Referenz-Collection-Freigabe (INCLUDE-Logik)
+# collections.txt - reference collection opt-in (INCLUDE logic)
 # ---------------------------------------------------------------------------
 
 def load_collection_includes(collections_filepath: str) -> list[str]:
     """
-    Lädt die Liste AKTIVER Collection-Freigaben aus collections.txt.
-    Erstellt eine Beispiel-Datei, falls noch keine existiert.
+    Loads the list of ACTIVE collection opt-ins from collections.txt.
+    Creates an example file if none exists yet.
 
-    INCLUDE-Logik: Standard ist NICHT laden. Nur eine AKTIVE Zeile (ohne
-    führendes '#') schaltet den Download dieser Collection frei:
-      collection:213142                 <- AKTIV, wird heruntergeladen
-      #collection:213142                 <- INAKTIV (Standard für neue Funde)
-    <id-oder-teiltitel> = pattern_source_id ODER Teil des Titels.
+    INCLUDE logic: the default is to NOT download. Only an ACTIVE line
+    (without a leading '#') enables the download of that collection:
+      collection:213142                 <- ACTIVE, will be downloaded
+      #collection:213142                 <- INACTIVE (default for new finds)
+    <id-or-partial-title> = pattern_source_id OR part of the title.
     """
     if not os.path.exists(collections_filepath):
         os.makedirs(os.path.dirname(collections_filepath), exist_ok=True)
         default_content = (
-            "# Referenz-Collections (patterns_count>1 ohne eigenes PDF-Bundle,\n"
-            "# z.B. Scheepjes 'YARN - The After Party') werden hier als Katalog\n"
-            "# gesammelt. Standard ist NICHT laden (INCLUDE-Logik) – nur eine\n"
-            "# AKTIVE Zeile (ohne führendes '#') schaltet den Download frei:\n"
+            "# Reference collections (patterns_count>1 without their own PDF\n"
+            "# bundle, e.g. Scheepjes 'YARN - The After Party') are collected\n"
+            "# here as a catalog. The default is to NOT download (INCLUDE\n"
+            "# logic) - only an ACTIVE line (without a leading '#') enables\n"
+            "# the download:\n"
             "#\n"
-            "#   collection:213142                 <- AKTIV, wird heruntergeladen\n"
-            "#   #collection:213142                 <- inaktiv (Standard)\n"
+            "#   collection:213142                 <- ACTIVE, will be downloaded\n"
+            "#   #collection:213142                 <- inactive (default)\n"
             "#\n"
-            "# Zum Aktivieren einfach das führende '#' vor der Zeile entfernen.\n"
-            "# <wert> = pattern_source_id ODER Teil des Titels, z.B.:\n"
+            "# To activate, simply remove the leading '#' before the line.\n"
+            "# <value> = pattern_source_id OR part of the title, e.g.:\n"
             "#   collection:Yarn - The After Party\n"
         )
         with open(collections_filepath, "w", encoding="utf-8") as f:
             f.write(default_content)
-        print(f"ℹ️  Neue Collections-Datei erstellt: '{collections_filepath}'")
+        print(f"ℹ️  New collections file created: '{collections_filepath}'")
         return []
 
     collection_includes = []
@@ -224,36 +225,35 @@ def load_collection_includes(collections_filepath: str) -> list[str]:
             if not line:
                 continue
 
-            # Führendes '#' abstreifen, um AKTIV ('collection:...') von
-            # INAKTIV ('#collection:...') zu unterscheiden. Zeilen, die NACH
-            # dem Abstreifen nicht mit 'collection:' beginnen, sind reine
-            # Kommentare.
+            # Strip the leading '#' to distinguish ACTIVE ('collection:...')
+            # from INACTIVE ('#collection:...'). Lines that don't start with
+            # 'collection:' AFTER stripping are pure comments.
             stripped_hash = line.lstrip("#").strip()
             if not stripped_hash.lower().startswith("collection:"):
-                continue  # reiner Kommentar
+                continue  # pure comment
 
             is_active = not line.startswith("#")
             if not is_active:
                 continue
 
-            # Inline-Kommentar abschneiden: 'collection:213142  # Titel'
+            # Strip inline comment: 'collection:213142  # Title'
             value = stripped_hash.split(":", 1)[1]
             value = value.split("#", 1)[0].strip().lower()
             if value:
                 collection_includes.append(value)
 
     if collection_includes:
-        print(f"ℹ️  {len(collection_includes)} aktive Collection-Freigabe(n) aus "
-              f"'{collections_filepath}' geladen.")
+        print(f"ℹ️  Loaded {len(collection_includes)} active collection opt-in(s) from "
+              f"'{collections_filepath}'.")
     return collection_includes
 
 
 def is_collection_included(collection_item: dict, collection_includes: list[str]) -> bool:
     """
-    Prüft, ob eine Referenz-Collection per AKTIVER 'collection:<id-oder-titel>'-
-    Zeile in collections.txt zum Download freigegeben wurde (INCLUDE-Logik:
-    Standard ist NICHT laden, nur explizit aktivierte Collections werden
-    geladen).
+    Checks whether a reference collection has been enabled for download
+    via an ACTIVE 'collection:<id-or-title>' line in collections.txt
+    (INCLUDE logic: the default is to NOT download, only explicitly
+    activated collections are downloaded).
     """
     src_id = str(collection_item.get("pattern_source_id", "")).lower()
     title  = (collection_item.get("title") or "").lower()
@@ -261,8 +261,8 @@ def is_collection_included(collection_item: dict, collection_includes: list[str]
 
 
 def load_synced_collection_ids() -> set[int]:
-    """Lädt die Menge der pattern_source_ids, die schon einmal in
-    collections.txt automatisch eingetragen wurden (siehe
+    """Loads the set of pattern_source_ids that have already been
+    automatically added to collections.txt once before (see
     sync_new_reference_collections)."""
     if not os.path.exists(COLLECTION_SYNC_FILE):
         return set()
@@ -280,16 +280,15 @@ def save_synced_collection_ids(ids: set[int]) -> None:
 
 def sync_new_reference_collections(collections: list[dict]) -> None:
     """
-    Trägt NEUE Referenz-Collections (die noch nie zuvor gesehen wurden)
-    automatisch INAKTIV als '#collection:<id>  # <Titel> (<n> Pattern)' in
-    collections.txt ein. So entsteht eine vollständige, durchsuchbare
-    Katalogliste zum Review, ohne dass versehentlich etwas heruntergeladen
-    wird. Zum Aktivieren einfach das führende '#' entfernen.
+    Automatically appends NEW reference collections (never seen before) as
+    INACTIVE '#collection:<id>  # <title> (<n> patterns)' lines to
+    collections.txt. This builds a complete, searchable catalog list for
+    review, without anything being downloaded by accident. To activate,
+    simply remove the leading '#'.
 
-    Bereits einmal in den Katalog eingetragene IDs werden in
-    COLLECTION_SYNC_FILE gemerkt, damit eine bekannte Collection beim
-    nächsten Lauf nicht erneut angehängt wird – unabhängig davon, ob du sie
-    inzwischen aktiviert oder deaktiviert gelassen hast.
+    IDs already added to the catalog are remembered in COLLECTION_SYNC_FILE,
+    so a known collection doesn't get appended again on the next run -
+    regardless of whether you've since activated or left it deactivated.
     """
     already_synced = load_synced_collection_ids()
     new_ones = [
@@ -301,14 +300,14 @@ def sync_new_reference_collections(collections: list[dict]) -> None:
 
     lines = [
         f"#collection:{c['pattern_source_id']}  "
-        f"# {c.get('title', 'Unbenannt')} ({c.get('patterns_count', '?')} Pattern)"
+        f"# {c.get('title', 'Untitled')} ({c.get('patterns_count', '?')} patterns)"
         for c in new_ones
     ]
     header = (
-        f"\n# --- Automatisch ergänzt am {time.strftime('%Y-%m-%d %H:%M')} "
-        f"({len(new_ones)} neue Referenz-Collection(en)) ---\n"
-        "# Standardmäßig INAKTIV. Führendes '#' entfernen = Collection WIRD "
-        "heruntergeladen.\n"
+        f"\n# --- Automatically added on {time.strftime('%Y-%m-%d %H:%M')} "
+        f"({len(new_ones)} new reference collection(s)) ---\n"
+        "# Inactive by default. Remove the leading '#' to make the "
+        "collection WILL be downloaded.\n"
     )
     with open(COLLECTIONS_FILE, "a", encoding="utf-8") as f:
         f.write(header + "\n".join(lines) + "\n")
@@ -316,21 +315,21 @@ def sync_new_reference_collections(collections: list[dict]) -> None:
     already_synced.update(c["pattern_source_id"] for c in new_ones)
     save_synced_collection_ids(already_synced)
 
-    print(f"ℹ️  {len(new_ones)} neue Referenz-Collection(en) automatisch (inaktiv) in "
-          f"'{COLLECTIONS_FILE}' eingetragen.")
+    print(f"ℹ️  Added {len(new_ones)} new reference collection(s) automatically (inactive) to "
+          f"'{COLLECTIONS_FILE}'.")
 
 
 # ---------------------------------------------------------------------------
-# Allgemeine Hilfsfunktionen
+# General helper functions
 # ---------------------------------------------------------------------------
 
 def ensure_download_dir():
-    """Stellt sicher, dass das Download-Verzeichnis existiert (Symlink-sicher)."""
+    """Ensures the download directory exists (symlink-safe)."""
     if os.path.islink(DOWNLOAD_DIR):
         real_target = os.path.realpath(DOWNLOAD_DIR)
         if not os.path.exists(real_target):
             raise FileNotFoundError(
-                f"Symlink '{DOWNLOAD_DIR}' zeigt auf nicht existierenden Ordner: '{real_target}'"
+                f"Symlink '{DOWNLOAD_DIR}' points to a non-existent folder: '{real_target}'"
             )
     else:
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -338,18 +337,17 @@ def ensure_download_dir():
 
 def try_download(url: str, filename: str, label: str, ignore_patterns: list[str]) -> str:
     """
-    Zentraler Download-Helper mit automatischem Browser-Login-Fallback.
-    Gibt zurück: 'downloaded', 'skipped_exists', 'skipped_ignore', 'error'
+    Central download helper with automatic browser-login fallback.
+    Returns: 'downloaded', 'skipped_exists', 'skipped_ignore', 'error'
 
-    is_ignored() (ignore.txt) wird hier für JEDEN Download geprüft, auch für
-    Dateien innerhalb einer per collections.txt aktivierten Referenz-
-    Collection – die beiden Mechanismen sind unabhängig und wirken beide.
+    is_ignored() (ignore.txt) is checked here for EVERY download, including
+    files within a reference collection activated via collections.txt -
+    the two mechanisms are independent and both apply.
 
-    Im Dry-Run-Modus (siehe modul-globales `dry_run`) wird NICHTS
-    heruntergeladen (kein Netzwerk-GET, kein Browser-Login) – es wird nur
-    gemeldet, ob die Datei heruntergeladen ODER per ignore.txt gefiltert
-    würde. 'downloaded' bedeutet im Dry-Run also "würde heruntergeladen",
-    nicht "wurde heruntergeladen".
+    In dry-run mode (see module-global `dry_run`), NOTHING is downloaded
+    (no network GET, no browser login) - it only reports whether the file
+    would be downloaded OR filtered by ignore.txt. 'downloaded' in dry-run
+    mode thus means "would be downloaded", not "was downloaded".
     """
     global browser_cookies
 
@@ -358,38 +356,38 @@ def try_download(url: str, filename: str, label: str, ignore_patterns: list[str]
         clean_name += ".pdf"
 
     if is_ignored(clean_name, ignore_patterns):
-        print(f"  🚫 {'Würde filtern' if dry_run else 'Gefiltert'} (ignore.txt): {clean_name}")
-        excluded_this_run.append(f"{clean_name}  (Datei-Filter, {label})")
+        print(f"  🚫 {'Would filter' if dry_run else 'Filtered'} (ignore.txt): {clean_name}")
+        excluded_this_run.append(f"{clean_name}  (file filter, {label})")
         return "skipped_ignore"
 
     target_path = os.path.join(DOWNLOAD_DIR, clean_name)
     if os.path.exists(target_path):
-        print(f"  ➜  Bereits vorhanden: {clean_name}")
+        print(f"  ➜  Already present: {clean_name}")
         return "skipped_exists"
 
     if dry_run:
-        print(f"  ✅ Würde laden ({label}): {clean_name}")
+        print(f"  ✅ Would download ({label}): {clean_name}")
         return "downloaded"
 
-    print(f"  ⬇️  Lade herunter ({label}): {clean_name}")
+    print(f"  ⬇️  Downloading ({label}): {clean_name}")
     ok, msg, browser_cookies = download_with_login_fallback(url, target_path, browser_cookies)
     if ok:
         time.sleep(0.3)
         return "downloaded"
     else:
-        print(f"  ❌ Fehler: {msg}")
+        print(f"  ❌ Error: {msg}")
         return "error"
 
 
 # ---------------------------------------------------------------------------
-# 1. VOLUMES (Bücher, Magazine, Collections mit eigenem PDF-Anhang)
+# 1. VOLUMES (books, magazines, collections with their own PDF attachment)
 # ---------------------------------------------------------------------------
 
 def fetch_library_volumes(username: str) -> list:
-    """Ruft alle Volume-Einträge aus der Bibliothek ab (type=pdf)."""
+    """Fetches all volume entries from the library (type=pdf)."""
     volumes = []
     page = 1
-    print("📚 Lade Bibliothek (Volumes/Bücher) …")
+    print("📚 Loading library (volumes/books) …")
     while True:
         data = api_get(
             f"/people/{username}/library/search.json",
@@ -404,12 +402,12 @@ def fetch_library_volumes(username: str) -> list:
             break
         page += 1
 
-    print(f"  → {len(volumes)} Volume(s) gefunden.\n")
+    print(f"  → Found {len(volumes)} volume(s).\n")
     return volumes
 
 
 def process_volumes(volumes: list, ignore_patterns: list[str]) -> dict:
-    """Verarbeitet Volumes und lädt zugehörige PDFs herunter."""
+    """Processes volumes and downloads their associated PDFs."""
     stats = {"downloaded": 0, "skipped_exists": 0, "skipped_ignore": 0, "error": 0}
 
     for idx, vol_summary in enumerate(volumes, start=1):
@@ -420,13 +418,13 @@ def process_volumes(volumes: list, ignore_patterns: list[str]) -> dict:
         try:
             vol_data = api_get(f"/volumes/{vol_id}.json").get("volume", {})
         except Exception as e:
-            print(f"  ⚠️  Details konnten nicht geladen werden ({e})")
+            print(f"  ⚠️  Could not load details ({e})")
             continue
 
         attachments = vol_data.get("volume_attachments", [])
 
         if not attachments:
-            print("  ℹ️  Keine PDF-Anhänge.")
+            print("  ℹ️  No PDF attachments.")
             continue
 
         for att in attachments:
@@ -441,17 +439,17 @@ def process_volumes(volumes: list, ignore_patterns: list[str]) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 2. EINZELN GEKAUFTE PATTERN (ravelry_download)
+# 2. INDIVIDUALLY PURCHASED PATTERNS (ravelry_download)
 # ---------------------------------------------------------------------------
 
 def fetch_library_patterns(username: str) -> list:
     """
-    Ruft alle Library-Einträge ab (ohne type-Filter), um daraus Einzelpattern
-    herauszufiltern (patterns_count == 1, pattern_id gesetzt).
+    Fetches all library entries (without a type filter), to filter out
+    individual patterns from them (patterns_count == 1, pattern_id set).
     """
     all_items = []
     page = 1
-    print("🧶 Lade Bibliothek (einzelne Pattern) …")
+    print("🧶 Loading library (individual patterns) …")
     while True:
         data = api_get(
             f"/people/{username}/library/search.json",
@@ -467,21 +465,21 @@ def fetch_library_patterns(username: str) -> list:
             break
         page += 1
 
-    print(f"  → {len(all_items)} Gesamteinträge in der Bibliothek.\n")
+    print(f"  → {len(all_items)} total entries in the library.\n")
     return all_items
 
 
 def get_pattern_download_url(pattern_id: int) -> tuple[str | None, str | None]:
     """
-    Holt die Download-URL für ein bereits gekauftes Einzelpattern.
+    Gets the download URL for an already purchased individual pattern.
 
-    WICHTIG: pattern.download_location.url ist eine KAUF-/CHECKOUT-URL
-    (zum Erwerben), KEINE Download-URL für bereits gekaufte Inhalte!
-    Ist das Pattern schon in der Library (pdf_in_library=true), läuft der
-    PDF-Download über das zugehörige Volume: volumes_in_library ->
+    IMPORTANT: pattern.download_location.url is a PURCHASE/CHECKOUT URL
+    (for buying), NOT a download URL for already purchased content! If the
+    pattern is already in the library (pdf_in_library=true), the PDF
+    download goes through the associated volume: volumes_in_library ->
     /volumes/{id}.json -> volume_attachments[].ravelry_download_url.
 
-    Gibt (url, filename) zurück oder (None, None) wenn kein Download verfügbar.
+    Returns (url, filename), or (None, None) if no download is available.
     """
     try:
         pattern = api_get(f"/patterns/{pattern_id}.json").get("pattern", {})
@@ -516,9 +514,9 @@ def get_pattern_download_url(pattern_id: int) -> tuple[str | None, str | None]:
 
 def process_individual_patterns(items: list, ignore_patterns: list[str]) -> dict:
     """
-    Filtert aus den Library-Items Einzelpattern heraus (patterns_count == 1,
-    pattern_id gesetzt) und lädt deren PDFs herunter. Volumes mit eigenen
-    volume_attachments wurden bereits in process_volumes behandelt.
+    Filters out individual patterns from the library items (patterns_count
+    == 1, pattern_id set) and downloads their PDFs. Volumes with their own
+    volume_attachments were already handled in process_volumes.
     """
     stats = {"downloaded": 0, "skipped_exists": 0, "skipped_ignore": 0, "error": 0}
 
@@ -528,13 +526,13 @@ def process_individual_patterns(items: list, ignore_patterns: list[str]) -> dict
         if item.get("pattern_id") and item.get("patterns_count", 1) == 1
     })
 
-    print(f"  → {len(candidates)} mögliche Einzel-Pattern zum Prüfen.\n")
+    print(f"  → {len(candidates)} possible individual pattern(s) to check.\n")
 
     for idx, pid in enumerate(candidates, start=1):
-        print(f"[{idx}/{len(candidates)}] Prüfe Pattern ID {pid} …")
+        print(f"[{idx}/{len(candidates)}] Checking pattern ID {pid} …")
         url, filename = get_pattern_download_url(pid)
         if not url:
-            print("  ℹ️  Kein Ravelry-Download verfügbar.")
+            print("  ℹ️  No Ravelry download available.")
             continue
         result = try_download(url, filename, "Pattern", ignore_patterns)
         stats[result] = stats.get(result, 0) + 1
@@ -543,19 +541,20 @@ def process_individual_patterns(items: list, ignore_patterns: list[str]) -> dict
 
 
 # ---------------------------------------------------------------------------
-# 3. REFERENZ-COLLECTIONS (patterns_count > 1, aber has_downloads=False)
+# 3. REFERENCE COLLECTIONS (patterns_count > 1, but has_downloads=False)
 # ---------------------------------------------------------------------------
 #
-# Manche Collections bündeln kein eigenes PDF, sondern verweisen nur auf
-# mehrere einzeln verlinkte Pattern (häufig kostenlose Ravelry-Downloads,
-# z.B. Yarn-Hersteller-Sammlungen wie Scheepjes "YARN - The After Party").
-# Solche Collections werden per /pattern_sources/{id}/patterns.json
-# aufgelistet; jedes enthaltene Pattern wird dann wie ein normales
-# Einzelpattern behandelt (gleicher Download-Weg wie in Variante 2).
+# Some collections don't bundle their own PDF, but instead only reference
+# multiple individually linked patterns (often free Ravelry downloads, e.g.
+# yarn manufacturer collections like Scheepjes "YARN - The After Party").
+# Such collections are listed via /pattern_sources/{id}/patterns.json;
+# each contained pattern is then treated like a normal individual pattern
+# (same download path as in variant 2).
 
 def find_reference_collections(items: list) -> list[dict]:
-    """Filtert Library-Items, die Referenz-Collections sind (patterns_count>1,
-    has_downloads=False) – also KEIN eigenes PDF-Bundle besitzen."""
+    """Filters out library items that are reference collections
+    (patterns_count>1, has_downloads=False) - i.e. they have NO own PDF
+    bundle."""
     return [
         item for item in items
         if item.get("patterns_count", 1) > 1 and not item.get("has_downloads")
@@ -563,41 +562,44 @@ def find_reference_collections(items: list) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# 4. UNVERARBEITETE EINTRÄGE (Transparenz-Report, kein Download-Versuch)
+# 4. UNHANDLED ENTRIES (transparency report, no download attempt)
 # ---------------------------------------------------------------------------
 #
-# Nicht jeder Library-Eintrag passt in eines der drei Download-Schemata oben.
-# Beobachtet wurden u.a.:
-#   - 'single_pattern_source': pattern_source_id gesetzt, patterns_count==1,
-#     aber KEIN pattern_id (z.B. Zeitschriften-Einzelhefte wie "Star Book
-#     No. 169" oder "Filati Häkeln 02"). Verifiziert per Live-Abfrage: das
-#     verknüpfte Pattern hat weder ravelry_download noch download_location
-#     -> technisch nicht herunterladbar.
-#   - 'orphan': weder pattern_id noch pattern_source_id gesetzt (z.B. "Noctiluca
-#     Dress", ein bei Etsy erworbenes Pattern, oder "Crochet Every Way Stitch
-#     Dictionary", ein reines Nachschlagewerk ohne einzelnes PDF).
+# Not every library entry fits into one of the three download schemes
+# above. Observed cases include:
+#   - 'single_pattern_source': pattern_source_id set, patterns_count==1,
+#     but NO pattern_id (e.g. single magazine issues like "Star Book
+#     No. 169" or "Filati Häkeln 02"). Verified via a live query: the
+#     linked pattern has neither ravelry_download nor download_location
+#     -> not technically downloadable.
+#   - 'orphan': neither pattern_id nor pattern_source_id set (e.g.
+#     "Noctiluca Dress", a pattern purchased on Etsy, or "Crochet Every
+#     Way Stitch Dictionary", a pure reference work with no individual
+#     PDF).
 #
-# Diese Items sind bestätigt extern erworben und ABSICHTLICH NICHT herunter-
-# zuladen (dient nur als durchsuchbare Referenz in der Library, siehe
-# docs/ravelry-api-kb.md). Statt sie lautlos zu verschlucken, werden sie
-# hier explizit erkannt und geloggt/reportet, damit nichts "verschwindet"
-# ohne dass man es nachvollziehen kann.
+# These items are confirmed to be externally acquired and INTENTIONALLY
+# NOT downloaded (serve only as a searchable reference in the library, see
+# docs/ravelry-api-kb.md). Instead of silently swallowing them, they are
+# explicitly detected and logged/reported here, so that nothing
+# "disappears" without being traceable.
 
 def categorize_item(item: dict) -> str:
     """
-    Ordnet einen Library-Eintrag genau einer Kategorie zu:
-      - 'volume_bundle'         : has_downloads=True -> eigenes PDF-Bundle
-                                   (wird von process_volumes behandelt)
-      - 'individual_pattern'    : pattern_id gesetzt, patterns_count==1,
+    Assigns a library entry to exactly one category:
+      - 'volume_bundle'         : has_downloads=True -> own PDF bundle
+                                   (handled by process_volumes)
+      - 'individual_pattern'    : pattern_id set, patterns_count==1,
                                    has_downloads=False (process_individual_patterns)
       - 'reference_collection'  : patterns_count>1, has_downloads=False
                                    (process_reference_collections)
-      - 'single_pattern_source' : pattern_source_id gesetzt, patterns_count==1,
-                                   kein pattern_id -> i.d.R. extern erworbene
-                                   Zeitschriften-Einzelhefte, nicht downloadbar
-      - 'orphan'                : weder pattern_id noch pattern_source_id ->
-                                   i.d.R. extern erworbene Patterns/Bücher,
-                                   nur zu Recherchezwecken in der Library
+      - 'single_pattern_source' : pattern_source_id set, patterns_count==1,
+                                   no pattern_id -> usually externally
+                                   acquired single magazine issues, not
+                                   downloadable
+      - 'orphan'                : neither pattern_id nor pattern_source_id ->
+                                   usually externally acquired
+                                   patterns/books, in the library only for
+                                   research purposes
     """
     if item.get("has_downloads"):
         return "volume_bundle"
@@ -611,8 +613,9 @@ def categorize_item(item: dict) -> str:
 
 
 def find_unhandled_items(items: list) -> list[dict]:
-    """Items, die in KEINEM der drei Download-Pfade landen (single_pattern_source,
-    orphan) – werden bewusst nicht herunterladen, siehe Modulkommentar oben."""
+    """Items that land in NONE of the three download paths
+    (single_pattern_source, orphan) - deliberately not downloaded, see the
+    module comment above."""
     return [
         item for item in items
         if categorize_item(item) in ("single_pattern_source", "orphan")
@@ -621,44 +624,43 @@ def find_unhandled_items(items: list) -> list[dict]:
 
 def report_unhandled_items(items: list) -> None:
     """
-    Loggt alle unverarbeiteten Items (siehe find_unhandled_items) und schreibt
-    die vollständige Liste als Report-Datei nach DOWNLOAD_DIR. Lädt NICHTS
-    herunter – reine Transparenz, damit nichts lautlos verschwindet.
+    Logs all unhandled items (see find_unhandled_items) and writes the
+    complete list to a report file under DOWNLOAD_DIR. Downloads NOTHING -
+    pure transparency, so nothing silently disappears.
     """
     unhandled = find_unhandled_items(items)
     if not unhandled:
         return
 
-    print(f"\nℹ️  {len(unhandled)} Library-Eintrag/Einträge ohne Download-Pfad "
-          f"(typischerweise extern erworben, nur zur Recherche in der Library):")
+    print(f"\nℹ️  {len(unhandled)} library entry/entries without a download path "
+          f"(typically externally acquired, in the library for research purposes only):")
     for item in unhandled[:10]:
-        print(f"    - {item.get('title', 'Unbenannt')!r}")
+        print(f"    - {item.get('title', 'Untitled')!r}")
     if len(unhandled) > 10:
-        print(f"    … und {len(unhandled) - 10} weitere (vollständige Liste siehe Report-Datei).")
+        print(f"    … and {len(unhandled) - 10} more (see the report file for the full list).")
 
     try:
         with open(SKIPPED_REPORT_FILE, "w", encoding="utf-8") as f:
             f.write(
-                "# Library-Einträge ohne erkennbaren Ravelry-Download-Pfad.\n"
-                "# Diese Datei wird bei jedem Lauf überschrieben – reiner Report,\n"
-                "# KEIN Steuer-Mechanismus (im Gegensatz zu ignore.txt/collections.txt).\n"
-                "# Typischerweise extern erworbene Patterns/Zeitschriften, die nur\n"
-                "# zu Recherchezwecken in die Library aufgenommen wurden.\n\n"
+                "# Library entries without a recognizable Ravelry download path.\n"
+                "# This file is overwritten on every run - a pure report,\n"
+                "# NOT a control mechanism (unlike ignore.txt/collections.txt).\n"
+                "# Typically externally acquired patterns/magazines that were\n"
+                "# only added to the library for research purposes.\n\n"
             )
             for item in unhandled:
-                f.write(f"{item.get('title', 'Unbenannt')}\n")
-        print(f"    → Vollständige Liste: {SKIPPED_REPORT_FILE}")
+                f.write(f"{item.get('title', 'Untitled')}\n")
+        print(f"    → Full list: {SKIPPED_REPORT_FILE}")
     except OSError as e:
-        print(f"    ⚠️  Report konnte nicht geschrieben werden: {e}")
+        print(f"    ⚠️  Could not write report: {e}")
 
 
 def write_excluded_log() -> None:
     """
-    Schreibt alle in diesem Lauf nicht heruntergeladenen Einträge (per
-    ignore.txt ODER per fehlender Freigabe in collections.txt) nach
-    EXCLUDED_LOG_FILE. Wird bei JEDEM Lauf überschrieben – zeigt also nur,
-    was im LETZTEN Lauf aktiv gefiltert wurde (nicht kumulativ über
-    mehrere Läufe).
+    Writes all entries not downloaded in this run (either via ignore.txt OR
+    due to missing opt-in in collections.txt) to EXCLUDED_LOG_FILE.
+    Overwritten on EVERY run - so it only shows what was actively filtered
+    in the LAST run (not cumulative across multiple runs).
     """
     if not excluded_this_run:
         return
@@ -666,16 +668,16 @@ def write_excluded_log() -> None:
     try:
         with open(EXCLUDED_LOG_FILE, "w", encoding="utf-8") as f:
             f.write(
-                "# Nicht heruntergeladene Einträge (letzter Lauf).\n"
-                "# Diese Datei wird bei jedem Lauf überschrieben – reines Log,\n"
-                "# zum Ändern selbst ignore.txt bzw. collections.txt bearbeiten.\n\n"
+                "# Entries not downloaded (last run).\n"
+                "# This file is overwritten on every run - a pure log,\n"
+                "# edit ignore.txt or collections.txt directly to change behavior.\n\n"
             )
             for entry in excluded_this_run:
                 f.write(f"{entry}\n")
-        print(f"\nℹ️  {len(excluded_this_run)} nicht heruntergeladene Einträge "
-              f"protokolliert: {EXCLUDED_LOG_FILE}")
+        print(f"\nℹ️  Logged {len(excluded_this_run)} entries not downloaded: "
+              f"{EXCLUDED_LOG_FILE}")
     except OSError as e:
-        print(f"⚠️  Excluded-Log konnte nicht geschrieben werden: {e}")
+        print(f"⚠️  Could not write excluded log: {e}")
 
 
 def process_reference_collections(
@@ -684,10 +686,10 @@ def process_reference_collections(
     collection_includes: list[str],
 ) -> dict:
     """
-    Lädt für jede per collections.txt AKTIVIERTE Referenz-Collection alle
-    enthaltenen Pattern einzeln herunter (sofern sie ravelry_download
-    anbieten, z.B. kostenlos sind). Nicht aktivierte Collections werden
-    übersprungen und ins Excluded-Log eingetragen.
+    For each reference collection ACTIVATED via collections.txt, downloads
+    all contained patterns individually (as long as they offer
+    ravelry_download, e.g. are free). Collections that aren't activated are
+    skipped and added to the excluded log.
     """
     stats = {"downloaded": 0, "skipped_exists": 0, "skipped_ignore": 0, "error": 0}
 
@@ -696,17 +698,17 @@ def process_reference_collections(
         title  = col.get("title") or f"Collection_{src_id}"
 
         if not is_collection_included(col, collection_includes):
-            print(f"🚫 Collection nicht aktiviert (collections.txt): {title!r} (source_id={src_id})")
+            print(f"🚫 Collection not activated (collections.txt): {title!r} (source_id={src_id})")
             excluded_this_run.append(
-                f"{title}  (Collection nicht aktiviert, source_id={src_id}, "
-                f"{col.get('patterns_count', '?')} Pattern)"
+                f"{title}  (collection not activated, source_id={src_id}, "
+                f"{col.get('patterns_count', '?')} patterns)"
             )
             continue
 
-        print(f"\n📖 Referenz-Collection: {title!r}  ({col.get('patterns_count')} Pattern, "
+        print(f"\n📖 Reference collection: {title!r}  ({col.get('patterns_count')} patterns, "
               f"source_id={src_id})")
 
-        # Alle Pattern dieser Quelle holen (paginiert)
+        # Fetch all patterns from this source (paginated)
         src_patterns = []
         page = 1
         while True:
@@ -721,27 +723,27 @@ def process_reference_collections(
                 break
             page += 1
 
-        print(f"  → {len(src_patterns)} Pattern in dieser Collection gefunden.")
+        print(f"  → Found {len(src_patterns)} pattern(s) in this collection.")
 
         for idx, p in enumerate(src_patterns, start=1):
             pid = p.get("id")
             name = p.get("name", f"pattern_{pid}")
             print(f"  [{idx}/{len(src_patterns)}] {name!r} …")
 
-            # Volle Pattern-Details holen (Summary aus pattern_sources hat
-            # kein download_location/ravelry_download-Feld)
+            # Fetch full pattern details (the summary from pattern_sources
+            # has no download_location/ravelry_download field)
             try:
                 detail = api_get(f"/patterns/{pid}.json").get("pattern", {})
             except Exception as e:
-                print(f"    ⚠️  Details konnten nicht geladen werden ({e})")
+                print(f"    ⚠️  Could not load details ({e})")
                 stats["error"] += 1
                 continue
 
             if not detail.get("ravelry_download"):
-                print("    ℹ️  Kein Ravelry-Download verfügbar (externe Quelle).")
+                print("    ℹ️  No Ravelry download available (external source).")
                 continue
 
-            # Bereits gekauft/in Library? -> über Volume laden (wie Variante 2)
+            # Already purchased/in library? -> download via volume (like variant 2)
             if detail.get("pdf_in_library") and detail.get("volumes_in_library"):
                 vol_detail = api_get(
                     f"/volumes/{detail['volumes_in_library'][0]}.json"
@@ -753,34 +755,35 @@ def process_reference_collections(
                 url = att.get("ravelry_download_url")
                 filename = att.get("filename") or sanitize_filename(name) + ".pdf"
                 if not url:
-                    print("    ℹ️  Keine Download-URL gefunden.")
+                    print("    ℹ️  No download URL found.")
                     continue
                 result = try_download(url, filename, "Collection-Pattern", ignore_patterns)
                 stats[result] = stats.get(result, 0) + 1
                 continue
 
-            # Nicht in Library, aber ravelry_download=true -> i.d.R. kostenlos,
-            # download_location.url ist dann der direkte /dls/-Downloadlink.
+            # Not in library, but ravelry_download=true -> usually free,
+            # download_location.url is then the direct /dls/ download link.
             loc = detail.get("download_location")
             if isinstance(loc, dict):
                 loc = [loc]
             url = next((l["url"] for l in (loc or []) if l.get("url")), None)
 
             if not url:
-                print("    ℹ️  Keine Download-URL gefunden.")
+                print("    ℹ️  No download URL found.")
                 continue
 
-            # Pattern mit MEHREREN Dateien liefert /dls/-URL statt eines
-            # PDFs eine "Datei wählen"-Seite mit je einem Link pro Datei.
-            # Das betrifft nicht nur Sprachübersetzungen (sehr häufig bei
-            # Referenz-Collections wie Scheepjes "YARN - The After Party"),
-            # sondern z.B. auch "Easy Read"-Versionen, separate Strick-
-            # diagramme/Charts oder druckfreundliche Fassungen. Jede dieser
-            # Dateien wird einzeln über try_download() geladen, damit
-            # ignore.txt (das bereits etliche Sprach-Ausschlüsse wie
-            # _NL.pdf/_FR.pdf/_KR.pdf pflegt und beliebig um andere
-            # Varianten-Ausschlüsse ergänzt werden kann) genauso greift wie
-            # bei allen anderen Downloads – KEINE Bevorzugung im Code.
+            # A pattern with MULTIPLE files returns a "choose file" page
+            # instead of a PDF for the /dls/ URL, with one link per file.
+            # This isn't limited to language translations (which are very
+            # common for reference collections like Scheepjes "YARN - The
+            # After Party"), but also includes, e.g., "Easy Read" versions,
+            # separate knitting charts, or print-friendly editions. Each of
+            # these files is downloaded individually via try_download(), so
+            # that ignore.txt (which already maintains quite a few language
+            # exclusions like _NL.pdf/_FR.pdf/_KR.pdf and can be extended
+            # with other variant exclusions as needed) applies here just
+            # like for any other download - NO preference hardcoded in the
+            # code.
             file_variants = fetch_file_variants(url)
             if file_variants is not None:
                 for variant_filename, variant_url in file_variants:
@@ -803,20 +806,20 @@ def process_reference_collections(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Lädt alle PDFs aus der eigenen Ravelry-Bibliothek herunter."
+        description="Downloads all PDFs from your own Ravelry library."
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help=(
-            "Simuliert den Lauf, ohne irgendetwas herunterzuladen (kein "
-            "Netzwerk-GET auf PDF-URLs, kein Browser-Login). Zeigt für jede "
-            "Datei nur, ob sie heruntergeladen oder per ignore.txt gefiltert "
-            "würde – zum gefahrlosen Review der eigenen ignore.txt. "
-            "collections.txt wird dabei NICHT verändert (neue Collections "
-            "werden nicht automatisch eingetragen); die Report-Dateien "
-            "skipped_non_downloadable.txt/excluded_by_ignore.txt werden "
-            "weiterhin geschrieben, da sie reine Logs ohne Steuerwirkung sind."
+            "Simulates the run without downloading anything (no network "
+            "GET on PDF URLs, no browser login). For each file, only shows "
+            "whether it would be downloaded or filtered by ignore.txt - for "
+            "a safe review of your own ignore.txt. collections.txt is NOT "
+            "modified in this mode (new collections are not added "
+            "automatically); the report files "
+            "skipped_non_downloadable.txt/excluded_by_ignore.txt are still "
+            "written, since they are pure logs with no control effect."
         ),
     )
     return parser.parse_args()
@@ -827,19 +830,19 @@ def main():
     args = parse_args()
     dry_run = args.dry_run
 
-    excluded_this_run.clear()  # Log soll nur den aktuellen Lauf zeigen
+    excluded_this_run.clear()  # the log should only show the current run
     ensure_download_dir()
     ignore_patterns = load_ignore_patterns(IGNORE_FILE)
     username = get_current_username()
-    print(f"👤 Eingeloggt als: {username}")
+    print(f"👤 Logged in as: {username}")
     if dry_run:
-        print("🧪 DRY-RUN: Es wird NICHTS heruntergeladen, nur simuliert.\n")
+        print("🧪 DRY RUN: NOTHING will be downloaded, only simulated.\n")
     else:
         print()
 
     total_stats = {"downloaded": 0, "skipped_exists": 0, "skipped_ignore": 0, "error": 0}
 
-    # --- Schritt 1: Volumes (eBooks, Collections mit eigenem PDF-Bundle) ---
+    # --- Step 1: Volumes (eBooks, collections with their own PDF bundle) ---
     volumes = fetch_library_volumes(username)
     if volumes:
         stats = process_volumes(volumes, ignore_patterns)
@@ -847,27 +850,27 @@ def main():
             total_stats[k] += v
         print()
 
-    # --- Schritt 2: Einzeln gekaufte Pattern ---
+    # --- Step 2: Individually purchased patterns ---
     all_items = fetch_library_patterns(username)
     if all_items:
         stats = process_individual_patterns(all_items, ignore_patterns)
         for k, v in stats.items():
             total_stats[k] += v
 
-    # --- Schritt 3: Referenz-Collections (ohne eigenes PDF-Bundle) ---
+    # --- Step 3: Reference collections (without their own PDF bundle) ---
     if all_items:
         reference_collections = find_reference_collections(all_items)
         if reference_collections:
-            print(f"\n📚 {len(reference_collections)} Referenz-Collection(en) gefunden "
-                  f"(ohne eigenes PDF-Bundle, Mitglieder einzeln verlinkt).")
+            print(f"\n📚 Found {len(reference_collections)} reference collection(s) "
+                  f"(without their own PDF bundle, members individually linked).")
 
-            # Neue Collections automatisch (inaktiv) in collections.txt eintragen,
-            # dann die Freigabeliste neu einlesen (enthält jetzt die frischen Einträge).
-            # Im Dry-Run wird collections.txt NICHT verändert (echte Mutation
-            # einer manuell gepflegten Steuerdatei) – eine neu gefundene,
-            # noch unbekannte Collection taucht dann einfach als "nicht
-            # aktiviert" in der Vorschau auf, statt automatisch angelegt zu
-            # werden.
+            # Automatically add new collections (inactive) to collections.txt,
+            # then re-read the opt-in list (now includes the fresh entries).
+            # In dry-run mode, collections.txt is NOT modified (that would be
+            # a real mutation of a manually maintained control file) - a
+            # newly found, still unknown collection then simply shows up as
+            # "not activated" in the preview, instead of being added
+            # automatically.
             if not dry_run:
                 sync_new_reference_collections(reference_collections)
             collection_includes = load_collection_includes(COLLECTIONS_FILE)
@@ -878,22 +881,22 @@ def main():
             for k, v in stats.items():
                 total_stats[k] += v
 
-    # --- Schritt 4: Transparenz-Report für nicht verarbeitbare Einträge ---
+    # --- Step 4: Transparency report for unprocessable entries ---
     if all_items:
         report_unhandled_items(all_items)
 
-    # --- Schritt 5: Log der nicht heruntergeladenen Einträge ---
+    # --- Step 5: Log of entries not downloaded ---
     write_excluded_log()
 
-    # --- Zusammenfassung ---
+    # --- Summary ---
     print("\n" + "=" * 50)
-    print("✅ DRY-RUN FERTIG (nichts wurde heruntergeladen)" if dry_run else "✅ FERTIG")
-    label_downloaded = "Würde laden" if dry_run else "Neu heruntergeladen"
-    label_ignored = "Würde filtern" if dry_run else "Nicht heruntergeladen"
+    print("✅ DRY RUN DONE (nothing was downloaded)" if dry_run else "✅ DONE")
+    label_downloaded = "Would download" if dry_run else "Newly downloaded"
+    label_ignored = "Would filter" if dry_run else "Not downloaded"
     print(f"  ⬇️  {label_downloaded:22}: {total_stats['downloaded']}")
-    print(f"  ➜   Bereits vorhanden  : {total_stats['skipped_exists']}")
+    print(f"  ➜   Already present   : {total_stats['skipped_exists']}")
     print(f"  🚫  {label_ignored:22}: {total_stats['skipped_ignore']}")
-    print(f"  ❌  Fehler             : {total_stats['error']}")
+    print(f"  ❌  Errors             : {total_stats['error']}")
     print("=" * 50)
 
 

@@ -1,14 +1,14 @@
 """
-Tests für das Log der nicht heruntergeladenen Einträge
-(write_excluded_log(), EXCLUDED_LOG_FILE) in ravelry-downloader.py.
+Tests for the log of entries not downloaded (write_excluded_log(),
+EXCLUDED_LOG_FILE) in ravelry-downloader.py.
 
-Deckt ab:
-  - try_download() trägt per ignore.txt gefilterte Dateien ins Log ein
-  - process_reference_collections() trägt per collections.txt NICHT
-    aktivierte Collections ins Log ein (INCLUDE-Logik: ohne Freigabe wird
-    nicht geladen)
-  - das Log wird bei jedem main()-Lauf überschrieben (nicht kumulativ)
-  - ohne Ausschlüsse in diesem Lauf wird KEINE Log-Datei angelegt
+Covers:
+  - try_download() records files filtered by ignore.txt in the log
+  - process_reference_collections() records collections NOT activated via
+    collections.txt in the log (INCLUDE logic: without an opt-in, nothing
+    is downloaded)
+  - the log is overwritten on every main() run (not cumulative)
+  - with no exclusions in this run, NO log file is created
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ class TestTryDownloadLogsExcludedFiles:
         assert "Pattern" in downloader.excluded_this_run[0]
 
     def test_non_filtered_download_is_not_recorded(self, downloader, isolated_download_dir, monkeypatch):
-        """Ein Download, der NICHT per ignore.txt gefiltert wird, darf nicht
-        im Excluded-Log auftauchen (unabhängig davon ob er erfolgreich ist)."""
-        # download_with_login_fallback mocken, damit kein echter Netzwerkcall passiert
+        """A download that is NOT filtered by ignore.txt must not show up
+        in the excluded log (regardless of whether it succeeds)."""
+        # Mock download_with_login_fallback so no real network call happens
         monkeypatch.setattr(
             downloader, "download_with_login_fallback",
             lambda url, path, cookies: (True, "ok", cookies),
@@ -58,12 +58,12 @@ class TestTryDownloadLogsExcludedFiles:
 
 class TestProcessReferenceCollectionsLogsExcluded:
     def test_not_included_collection_is_recorded(self, downloader, isolated_download_dir):
-        """INCLUDE-Logik: eine Collection, die NICHT in collection_includes
-        steht, wird nicht geladen und landet im Excluded-Log."""
+        """INCLUDE logic: a collection that is NOT in collection_includes
+        is not downloaded and ends up in the excluded log."""
         downloader.process_reference_collections(
             collections=[IGNORED_COLLECTION],
             ignore_patterns=[],
-            collection_includes=[],  # nichts aktiviert
+            collection_includes=[],  # nothing activated
         )
 
         assert len(downloader.excluded_this_run) == 1
@@ -88,13 +88,13 @@ class TestWriteExcludedLog:
         assert not log_path.exists()
 
     def test_log_overwritten_not_appended_across_runs(self, downloader, isolated_download_dir):
-        """Simuliert zwei main()-Läufe: excluded_this_run.clear() + neue
-        Einträge + write_excluded_log() -> das Log darf nur den LETZTEN
-        Lauf zeigen, nicht die Summe aller Läufe."""
+        """Simulates two main() runs: excluded_this_run.clear() + new
+        entries + write_excluded_log() -> the log may only show the LAST
+        run, not the sum of all runs."""
         downloader.excluded_this_run.append("Lauf1_Datei.pdf  (Datei-Filter, Pattern)")
         downloader.write_excluded_log()
 
-        downloader.excluded_this_run.clear()  # main() tut das zu Beginn jedes Laufs
+        downloader.excluded_this_run.clear()  # main() does this at the start of every run
         downloader.excluded_this_run.append("Lauf2_Datei.pdf  (Datei-Filter, Pattern)")
         downloader.write_excluded_log()
 

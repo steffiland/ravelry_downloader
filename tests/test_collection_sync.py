@@ -1,15 +1,16 @@
 """
-Tests für den Katalog-Sync-Mechanismus von Referenz-Collections in
-ravelry-downloader.py (INCLUDE-Logik über collections.txt):
+Tests for the catalog sync mechanism for reference collections in
+ravelry-downloader.py (INCLUDE logic via collections.txt):
 
-  - find_reference_collections() erkennt Collections ohne eigenes PDF-Bundle
-  - sync_new_reference_collections() trägt neue Collections automatisch
-    INAKTIV in collections.txt ein
-  - wiederholte Syncs erzeugen keine Duplikate (Idempotenz)
-  - eine vom Nutzer manuell AKTIVIERTE Zeile (führendes '#' entfernt) wird
-    beim nächsten Sync NICHT wieder deaktiviert oder dupliziert (das ist der
-    ganze Zweck: einmal aktiviert bleibt aktiviert, bis der Nutzer es
-    selbst ändert)
+  - find_reference_collections() detects collections without their own
+    PDF bundle
+  - sync_new_reference_collections() automatically adds new collections as
+    INACTIVE to collections.txt
+  - repeated syncs don't create duplicates (idempotency)
+  - a line manually ACTIVATED by the user (leading '#' removed) is NOT
+    deactivated or duplicated again on the next sync (that's the whole
+    point: once activated, it stays activated until the user changes it
+    themselves)
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from __future__ import annotations
 import json
 
 
-# Beispiel-Library-Items, wie sie von library/search.json zurückkommen.
+# Example library items, as returned by library/search.json.
 EBOOK_ITEM = {
     "id": 593135913,
     "pattern_id": 7517377,
@@ -51,7 +52,7 @@ BUNDLE_COLLECTION_WITH_DOWNLOADS = {
     "pattern_source_id": 999999,
     "title": "Shawl Collection to Crochet 4",
     "patterns_count": 4,
-    "has_downloads": True,  # hat eigenes PDF-Bundle -> KEINE Referenz-Collection
+    "has_downloads": True,  # has its own PDF bundle -> NOT a reference collection
 }
 
 
@@ -68,9 +69,9 @@ class TestFindReferenceCollections:
         assert result == []
 
     def test_collection_with_own_pdf_bundle_is_excluded(self, downloader):
-        """patterns_count > 1 reicht nicht: has_downloads=True bedeutet, es
-        gibt bereits ein eigenes PDF-Bundle (z.B. 'Shawl Collection to Crochet
-        4' aus process_volumes) -> keine Referenz-Collection."""
+        """patterns_count > 1 isn't enough: has_downloads=True means there's
+        already an own PDF bundle (e.g. 'Shawl Collection to Crochet 4' from
+        process_volumes) -> not a reference collection."""
         result = downloader.find_reference_collections([BUNDLE_COLLECTION_WITH_DOWNLOADS])
         assert result == []
 
@@ -86,7 +87,7 @@ class TestSyncNewReferenceCollections:
 
         assert "#collection:213142" in content
         assert "YARN - The After Party" in content
-        assert "147 Pattern" in content
+        assert "147 patterns" in content
 
     def test_synced_collection_is_tracked(self, downloader, isolated_download_dir):
         downloader.sync_new_reference_collections([REFERENCE_COLLECTION_AFTER_PARTY])
@@ -114,31 +115,31 @@ class TestSyncNewReferenceCollections:
         assert "#collection:393415" in content
 
     def test_manually_activated_line_is_not_touched_again(self, downloader, isolated_download_dir):
-        """Kernverhalten des Katalog-Sync: aktiviert der Nutzer eine Zeile
-        (führendes '#' entfernt = 'ich will diese Collection laden'), darf
-        ein erneuter Sync-Lauf sie NICHT wieder deaktivieren oder
-        duplizieren."""
+        """Core behavior of the catalog sync: once the user activates a
+        line (leading '#' removed = 'I want to download this
+        collection'), a subsequent sync run must NOT deactivate or
+        duplicate it again."""
         collections_file = isolated_download_dir / "collections.txt"
 
         downloader.sync_new_reference_collections([REFERENCE_COLLECTION_AFTER_PARTY])
         assert "#collection:213142" in collections_file.read_text(encoding="utf-8")
 
-        # Nutzer aktiviert die Zeile manuell (führendes '#' entfernen)
+        # User activates the line manually (removes the leading '#')
         content = collections_file.read_text(encoding="utf-8")
         content = content.replace("#collection:213142", "collection:213142")
         collections_file.write_text(content, encoding="utf-8")
 
-        # Erneuter Sync-Lauf mit denselben Collections aus der API
+        # Another sync run with the same collections from the API
         downloader.sync_new_reference_collections([REFERENCE_COLLECTION_AFTER_PARTY])
 
         final_content = collections_file.read_text(encoding="utf-8")
         assert "collection:213142" in final_content
-        assert "#collection:213142" not in final_content  # nicht erneut deaktiviert
-        assert final_content.count("collection:213142") == 1  # nicht dupliziert
+        assert "#collection:213142" not in final_content  # not deactivated again
+        assert final_content.count("collection:213142") == 1  # not duplicated
 
     def test_only_truly_new_collections_are_appended(self, downloader, isolated_download_dir):
-        """Nach dem ersten Sync von Collection A ist ein zweiter Sync-Aufruf
-        mit [A, B] erwartet, nur B neu hinzuzufügen."""
+        """After the first sync of collection A, a second sync call with
+        [A, B] is expected to add only B as new."""
         downloader.sync_new_reference_collections([REFERENCE_COLLECTION_AFTER_PARTY])
         downloader.sync_new_reference_collections(
             [REFERENCE_COLLECTION_AFTER_PARTY, REFERENCE_COLLECTION_MAGAZINE]
@@ -159,8 +160,8 @@ class TestSyncNewReferenceCollections:
 
 
 class TestSyncRoundTrip:
-    """End-to-End: sync schreiben -> einlesen -> is_collection_included prüfen.
-    Deckt exakt den Workflow ab, den main() im echten Lauf durchläuft."""
+    """End-to-end: write sync -> read back -> check is_collection_included.
+    Covers exactly the workflow that main() goes through in a real run."""
 
     def test_newly_synced_collection_is_not_included_by_default(self, downloader, isolated_download_dir):
         downloader.sync_new_reference_collections([REFERENCE_COLLECTION_AFTER_PARTY])
@@ -175,7 +176,7 @@ class TestSyncRoundTrip:
 
         downloader.sync_new_reference_collections([REFERENCE_COLLECTION_AFTER_PARTY])
         content = collections_file.read_text(encoding="utf-8")
-        content = content.replace("#collection:213142", "collection:213142")  # aktivieren
+        content = content.replace("#collection:213142", "collection:213142")  # activate
         collections_file.write_text(content, encoding="utf-8")
 
         includes = downloader.load_collection_includes(str(collections_file))

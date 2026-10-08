@@ -1,31 +1,33 @@
 """
-Tests für die Kategorisierung von Library-Einträgen in ravelry-downloader.py:
+Tests for the categorization of library entries in ravelry-downloader.py:
 categorize_item(), find_unhandled_items(), report_unhandled_items().
 
-Hintergrund: Eine Live-Analyse der echten Ravelry-Library zeigte 858 Einträge
-in 6 unterschiedlichen Daten-"Shapes". Drei davon griffen in keinem der drei
-Download-Pfade (Volumes, Einzelpattern, Referenz-Collections):
+Background: a live analysis of the real Ravelry library showed 858
+entries across 6 different data "shapes". Three of these fell into none
+of the three download paths (volumes, individual patterns, reference
+collections):
 
-  - 114x externe Pattern (download_location.type == "external") – fallen
-    schon vorher via process_individual_patterns() raus, da pdf_in_library
-    fehlt. Nicht Teil dieser Kategorisierung (die betrifft nur Items, die
-    GAR KEINEN pattern_id-Pfad haben).
-  - 19x 'single_pattern_source': pattern_source_id gesetzt, patterns_count==1,
-    aber kein pattern_id (z.B. "Star Book No. 169", "Filati Häkeln 02") –
-    bestätigt extern erworbene Zeitschriften-Einzelhefte, nicht downloadbar.
-  - 2x 'orphan': weder pattern_id noch pattern_source_id (z.B. "Noctiluca
-    Dress" von Etsy, "Crochet Every Way Stitch Dictionary" als Referenzbuch).
+  - 114x external patterns (download_location.type == "external") -
+    already filtered out earlier via process_individual_patterns(), since
+    pdf_in_library is missing. Not part of this categorization (which only
+    concerns items that have NO pattern_id path at all).
+  - 19x 'single_pattern_source': pattern_source_id set, patterns_count==1,
+    but no pattern_id (e.g. "Star Book No. 169", "Filati Häkeln 02") -
+    confirmed externally acquired single magazine issues, not
+    downloadable.
+  - 2x 'orphan': neither pattern_id nor pattern_source_id (e.g. "Noctiluca
+    Dress" from Etsy, "Crochet Every Way Stitch Dictionary" as a reference
+    book).
 
-Diese Tests stellen sicher, dass solche Einträge weiterhin NICHT herunter-
-geladen werden (wie vom Nutzer bestätigt: "externe patterns sollen nicht
-runtergeladen werden"), aber im Gegensatz zu vorher sichtbar reportet statt
-lautlos verschluckt werden.
+These tests ensure that such entries continue to NOT be downloaded (as
+confirmed by the user: "external patterns should not be downloaded"), but
+unlike before are visibly reported instead of being silently swallowed.
 """
 
 from __future__ import annotations
 
 
-# Reale (anonymisierte) Beispiele aus den sechs beobachteten Library-Shapes.
+# Real (anonymized) examples from the six observed library shapes.
 
 VOLUME_BUNDLE = {
     "title": "Bibelot",
@@ -59,9 +61,9 @@ COLLECTION_WITH_OWN_BUNDLE = {
     "has_downloads": True,
 }
 
-# "Star Book No. 169, Socks Socks Socks and Mittens, Too" – extern erworbenes
-# Zeitschriften-Einzelheft, laut Nutzer: "Star Book [...] extern erworbene[...]
-# Zeitschriften"
+# "Star Book No. 169, Socks Socks Socks and Mittens, Too" - an externally
+# acquired single magazine issue, per the user: "Star Book [...] externally
+# acquired [...] magazines"
 SINGLE_PATTERN_SOURCE_MAGAZINE = {
     "title": "Star Book No. 169, Socks Socks Socks and Mittens, Too",
     "pattern_id": None,
@@ -70,7 +72,7 @@ SINGLE_PATTERN_SOURCE_MAGAZINE = {
     "has_downloads": False,
 }
 
-# "Noctiluca Dress" – laut Nutzer: "bei Etsy erworbenes Dress"
+# "Noctiluca Dress" - per the user: "a dress purchased on Etsy"
 ORPHAN_ETSY_PATTERN = {
     "title": "Noctiluca Dress",
     "pattern_id": None,
@@ -79,8 +81,8 @@ ORPHAN_ETSY_PATTERN = {
     "has_downloads": False,
 }
 
-# "Crochet Every Way Stitch Dictionary" – laut Nutzer: "ist ein Buch, das passt"
-# (bewusst in die Library aufgenommenes Referenzwerk, kein Einzelpattern)
+# "Crochet Every Way Stitch Dictionary" - per the user: "it's a book, that's fine"
+# (a reference work deliberately added to the library, not an individual pattern)
 ORPHAN_REFERENCE_BOOK = {
     "title": "Crochet Every Way Stitch Dictionary: 125 Essential Stitches to Crochet in Three Ways",
     "pattern_id": None,
@@ -101,9 +103,9 @@ class TestCategorizeItem:
         assert downloader.categorize_item(REFERENCE_COLLECTION) == "reference_collection"
 
     def test_collection_with_own_bundle_counts_as_volume_bundle(self, downloader):
-        """has_downloads=True hat Vorrang vor patterns_count>1: eine Collection
-        MIT eigenem PDF-Bundle wird von process_volumes behandelt, nicht von
-        process_reference_collections."""
+        """has_downloads=True takes precedence over patterns_count>1: a
+        collection WITH its own PDF bundle is handled by process_volumes,
+        not by process_reference_collections."""
         assert downloader.categorize_item(COLLECTION_WITH_OWN_BUNDLE) == "volume_bundle"
 
     def test_single_pattern_source_magazine(self, downloader):
@@ -116,8 +118,8 @@ class TestCategorizeItem:
         assert downloader.categorize_item(ORPHAN_REFERENCE_BOOK) == "orphan"
 
     def test_every_item_gets_exactly_one_category(self, downloader):
-        """Jedes Item muss in GENAU eine der fünf Kategorien fallen -
-        keine Lücken, keine Überlappung."""
+        """Every item must fall into EXACTLY one of the five categories -
+        no gaps, no overlap."""
         valid_categories = {
             "volume_bundle", "individual_pattern", "reference_collection",
             "single_pattern_source", "orphan",
@@ -166,7 +168,7 @@ class TestReportUnhandledItems:
         content = report_path.read_text(encoding="utf-8")
         assert "Star Book No. 169" in content
         assert "Noctiluca Dress" in content
-        # Downloadbare Items dürfen NICHT im Report auftauchen
+        # Downloadable items must NOT show up in the report
         assert "Bibelot" not in content
 
     def test_no_report_file_when_nothing_unhandled(self, downloader, isolated_download_dir):
@@ -176,11 +178,11 @@ class TestReportUnhandledItems:
         assert not report_path.exists()
 
     def test_report_does_not_trigger_any_download(self, downloader, isolated_download_dir):
-        """report_unhandled_items() darf NUR loggen/reporten, niemals
-        try_download() aufrufen oder sonst Netzwerk-I/O auslösen."""
+        """report_unhandled_items() may ONLY log/report, never call
+        try_download() or otherwise trigger network I/O."""
         items = [SINGLE_PATTERN_SOURCE_MAGAZINE, ORPHAN_ETSY_PATTERN]
 
-        # Kein Download-Verzeichnis-Inhalt außer der Report-Datei erwartet
+        # No download directory content expected besides the report file
         downloader.report_unhandled_items(items)
 
         created_files = list(isolated_download_dir.iterdir())

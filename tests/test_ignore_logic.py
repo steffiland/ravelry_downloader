@@ -1,13 +1,14 @@
 """
-Tests für die Steuer-Dateien in ravelry-downloader.py:
-  - ignore.txt (EXCLUDE-Logik, Dateinamen-Filter, gilt für ALLE Downloads)
+Tests for the control files in ravelry-downloader.py:
+  - ignore.txt (EXCLUDE logic, filename filter, applies to ALL downloads)
     load_ignore_patterns(), is_ignored()
-  - collections.txt (INCLUDE-Logik, nur Referenz-Collections)
+  - collections.txt (INCLUDE logic, only reference collections)
     load_collection_includes(), is_collection_included()
 
-Deckt u.a. den Bug ab, der beim manuellen Testen auffiel: automatisch
-generierte Inline-Kommentare ('collection:213142  # Titel (147 Pattern)')
-wurden beim Wiedereinlesen NICHT vom Wert getrennt.
+Covers, among other things, the bug that surfaced during manual testing:
+automatically generated inline comments
+('collection:213142  # Title (147 patterns)') were NOT separated from the
+value when read back in.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ def write_file(path, content: str):
 
 
 class TestLoadIgnorePatterns:
-    """ignore.txt: reine EXCLUDE-Logik für Dateinamen, keine Collection-Syntax."""
+    """ignore.txt: pure EXCLUDE logic for filenames, no collection syntax."""
 
     def test_creates_default_file_when_missing(self, downloader, isolated_download_dir):
         ignore_file = downloader.IGNORE_FILE
@@ -33,7 +34,7 @@ class TestLoadIgnorePatterns:
 
     def test_parses_plain_filename_patterns(self, downloader, isolated_download_dir):
         ignore_file = isolated_download_dir / "ignore.txt"
-        write_file(ignore_file, "_NL.pdf\n_FR.pdf\n# ein Kommentar\n\n")
+        write_file(ignore_file, "_NL.pdf\n_FR.pdf\n# a comment\n\n")
 
         filename_patterns = downloader.load_ignore_patterns(str(ignore_file))
 
@@ -41,7 +42,7 @@ class TestLoadIgnorePatterns:
 
     def test_strips_inline_comment_from_filename_line(self, downloader, isolated_download_dir):
         ignore_file = isolated_download_dir / "ignore.txt"
-        write_file(ignore_file, "_NL.pdf  # niederländische Version\n")
+        write_file(ignore_file, "_NL.pdf  # Dutch version\n")
 
         filename_patterns = downloader.load_ignore_patterns(str(ignore_file))
 
@@ -49,16 +50,16 @@ class TestLoadIgnorePatterns:
 
     def test_blank_and_comment_only_lines_ignored(self, downloader, isolated_download_dir):
         ignore_file = isolated_download_dir / "ignore.txt"
-        write_file(ignore_file, "\n   \n# nur ein Kommentar\n#\n")
+        write_file(ignore_file, "\n   \n# just a comment\n#\n")
 
         filename_patterns = downloader.load_ignore_patterns(str(ignore_file))
 
         assert filename_patterns == []
 
     def test_collection_syntax_is_not_special_in_ignore_file(self, downloader, isolated_download_dir):
-        """ignore.txt kennt KEINE Collection-Syntax mehr (die lebt jetzt in
-        collections.txt) – eine 'collection:...'-Zeile wird hier wie ein
-        normaler (wenn auch unsinniger) Dateinamen-Filter behandelt."""
+        """ignore.txt no longer knows any collection syntax (that now lives
+        in collections.txt) - a 'collection:...' line is treated here like
+        a normal (if nonsensical) filename filter."""
         ignore_file = isolated_download_dir / "ignore.txt"
         write_file(ignore_file, "collection:213142\n")
 
@@ -79,8 +80,8 @@ class TestIsIgnored:
 
 
 class TestLoadCollectionIncludes:
-    """collections.txt: INCLUDE-Logik – nur AKTIVE (nicht '#'-präfixierte)
-    'collection:...'-Zeilen zählen."""
+    """collections.txt: INCLUDE logic - only ACTIVE (not '#'-prefixed)
+    'collection:...' lines count."""
 
     def test_creates_default_file_when_missing(self, downloader, isolated_download_dir):
         collections_file = downloader.COLLECTIONS_FILE
@@ -108,13 +109,13 @@ class TestLoadCollectionIncludes:
         assert includes == []
 
     def test_strips_inline_comment_from_active_line(self, downloader, isolated_download_dir):
-        """Regressionstest: die automatisch generierten Zeilen tragen einen
-        Inline-Kommentar ('# Titel (n Pattern)'), der nicht Teil des Werts
-        werden darf."""
+        """Regression test: the automatically generated lines carry an
+        inline comment ('# Title (n patterns)') that must not become part
+        of the value."""
         collections_file = isolated_download_dir / "collections.txt"
         write_file(
             collections_file,
-            "collection:213142  # YARN - The After Party (147 Pattern)\n",
+            "collection:213142  # YARN - The After Party (147 patterns)\n",
         )
 
         includes = downloader.load_collection_includes(str(collections_file))
@@ -122,12 +123,13 @@ class TestLoadCollectionIncludes:
         assert includes == ["213142"]
 
     def test_inactive_line_with_inline_comment_is_not_included(self, downloader, isolated_download_dir):
-        """Das ist exakt das Format, das sync_new_reference_collections()
-        automatisch erzeugt: inaktiv UND mit Inline-Kommentar."""
+        """This is exactly the format that
+        sync_new_reference_collections() generates automatically: inactive
+        AND with an inline comment."""
         collections_file = isolated_download_dir / "collections.txt"
         write_file(
             collections_file,
-            "#collection:213142  # YARN - The After Party (147 Pattern)\n",
+            "#collection:213142  # YARN - The After Party (147 patterns)\n",
         )
 
         includes = downloader.load_collection_includes(str(collections_file))
@@ -144,7 +146,7 @@ class TestLoadCollectionIncludes:
 
     def test_pure_comment_lines_are_ignored(self, downloader, isolated_download_dir):
         collections_file = isolated_download_dir / "collections.txt"
-        write_file(collections_file, "# Das ist nur ein Kommentar, keine Collection-Zeile\n")
+        write_file(collections_file, "# This is just a comment, not a collection line\n")
 
         includes = downloader.load_collection_includes(str(collections_file))
 
@@ -154,9 +156,9 @@ class TestLoadCollectionIncludes:
         collections_file = isolated_download_dir / "collections.txt"
         write_file(
             collections_file,
-            "collection:213142  # Aktiv\n"
-            "#collection:393415  # Inaktiv\n"
-            "collection:41932  # Auch aktiv\n",
+            "collection:213142  # Active\n"
+            "#collection:393415  # Inactive\n"
+            "collection:41932  # Also active\n",
         )
 
         includes = downloader.load_collection_includes(str(collections_file))
@@ -175,22 +177,22 @@ class TestIsCollectionIncluded:
 
     def test_no_match_for_unrelated_include(self, downloader):
         collection = {"pattern_source_id": 213142, "title": "YARN - The After Party"}
-        assert downloader.is_collection_included(collection, ["irgendwas anderes"]) is False
+        assert downloader.is_collection_included(collection, ["something else"]) is False
 
     def test_no_match_with_empty_include_list(self, downloader):
-        """INCLUDE-Logik: ohne jede Freigabe wird NICHTS geladen (Standard
-        ist aus, nicht an)."""
+        """INCLUDE logic: with no opt-in at all, NOTHING is downloaded (the
+        default is off, not on)."""
         collection = {"pattern_source_id": 213142, "title": "YARN - The After Party"}
         assert downloader.is_collection_included(collection, []) is False
 
     def test_integration_with_inline_comment_from_sync(self, downloader, isolated_download_dir):
-        """End-to-End: Eine von sync_new_reference_collections() generierte
-        (inaktive) Zeile darf erst NACH Entfernen des '#' tatsächlich greifen."""
+        """End-to-end: a line generated by sync_new_reference_collections()
+        (inactive) must only take effect AFTER the '#' is removed."""
         collections_file = isolated_download_dir / "collections.txt"
 
         write_file(
             collections_file,
-            "#collection:213142  # YARN - The After Party (147 Pattern)\n",
+            "#collection:213142  # YARN - The After Party (147 patterns)\n",
         )
         includes_inactive = downloader.load_collection_includes(str(collections_file))
         collection = {"pattern_source_id": 213142, "title": "YARN - The After Party"}
@@ -198,7 +200,7 @@ class TestIsCollectionIncluded:
 
         write_file(
             collections_file,
-            "collection:213142  # YARN - The After Party (147 Pattern)\n",
+            "collection:213142  # YARN - The After Party (147 patterns)\n",
         )
         includes_active = downloader.load_collection_includes(str(collections_file))
         assert downloader.is_collection_included(collection, includes_active) is True

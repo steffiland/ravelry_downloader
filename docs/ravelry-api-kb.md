@@ -1,36 +1,36 @@
-# Ravelry API – Knowledge Base
+# Ravelry API - Knowledge Base
 
-> Stand: Oktober 2026  
-> Basis-URL: `https://api.ravelry.com`
+> As of: October 2026  
+> Base URL: `https://api.ravelry.com`
 
 ---
 
-## 1. Authentifizierung
+## 1. Authentication
 
-Ravelry unterstützt drei Auth-Methoden:
+Ravelry supports three auth methods:
 
-| Methode | Wann | Keys |
+| Method | When | Keys |
 |---|---|---|
-| **Basic Auth (read-only)** | Öffentliche Katalogdaten, kein Login nötig | `ACCESS_KEY` als Username, `PERSONAL_KEY` als Password |
-| **Basic Auth (personal)** | Zugriff auf eigene Bibliothek, Käufe, Stash etc. | `ACCESS_KEY` + `PERSONAL_KEY` (aus Ravelry Pro) |
-| **OAuth 2.0** | Fremde User-Daten (App für andere Nutzer) | `ACCESS_KEY` + `SECRET_KEY` + Callback-URL |
+| **Basic Auth (read-only)** | Public catalog data, no login needed | `ACCESS_KEY` as username, `PERSONAL_KEY` as password |
+| **Basic Auth (personal)** | Access to your own library, purchases, stash etc. | `ACCESS_KEY` + `PERSONAL_KEY` (from Ravelry Pro) |
+| **OAuth 2.0** | Other users' data (app for other users) | `ACCESS_KEY` + `SECRET_KEY` + callback URL |
 
-Für den eigenen Account reicht **Basic Auth mit Personal Key**:
+For your own account, **Basic Auth with a personal key** is enough:
 ```python
 AUTH = (ACCESS_KEY, PERSONAL_KEY)
 requests.get(url, auth=AUTH)
 ```
 
-Keys holen: https://www.ravelry.com/pro/developer → App anlegen → „Basic Auth: Personal Key"
+Get keys: https://www.ravelry.com/pro/developer → create an app → "Basic Auth: Personal Key"
 
 ---
 
-## 2. Aktueller User
+## 2. Current user
 
 ```
 GET /current_user.json
 ```
-**Response-Felder (user):**
+**Response fields (user):**
 - `id`, `username`, `email`
 - `photo_url`, `small_photo_url`
 
@@ -41,9 +41,9 @@ username = res.json()["user"]["username"]
 
 ---
 
-## 3. Bibliothek (Library)
+## 3. Library
 
-Das ist das Herzstück für PDF-Downloads.
+This is the core piece for PDF downloads.
 
 ### 3.1 Library Search
 
@@ -51,26 +51,26 @@ Das ist das Herzstück für PDF-Downloads.
 GET /people/{username}/library/search.json
 ```
 
-**Query-Parameter:**
+**Query parameters:**
 
-| Parameter | Werte | Beschreibung |
+| Parameter | Values | Description |
 |---|---|---|
-| `page` | int | Seite |
-| `page_size` | int (max. 100) | Einträge pro Seite |
-| `type` | `pdf`, `pattern`, `ravelry` | Typ-Filter (s.u.) |
-| `query` | string | Freitextsuche |
-| `sort` | `added`, `title`, `author` | Sortierung |
+| `page` | int | Page |
+| `page_size` | int (max. 100) | Entries per page |
+| `type` | `pdf`, `pattern`, `ravelry` | Type filter (see below) |
+| `query` | string | Free-text search |
+| `sort` | `added`, `title`, `author` | Sort order |
 
-**Wichtig: `type`-Werte:**
+**Important: `type` values:**
 
-| Wert | Was wird zurückgegeben |
+| Value | What's returned |
 |---|---|
-| `pdf` | **Volumes** – Bücher, Magazine, Collections mit eigenem PDF-Anhang (`volume_attachments`) |
-| `pattern` | Einzeln gekaufte Pattern (ravelry_download, externe PDF-Links) |
-| `ravelry` | Pattern, direkt auf Ravelry als Download gekauft |
-| *(kein Filter)* | Alles kombiniert |
+| `pdf` | **Volumes** - books, magazines, collections with their own PDF attachment (`volume_attachments`) |
+| `pattern` | Individually purchased patterns (ravelry_download, external PDF links) |
+| `ravelry` | Patterns purchased directly on Ravelry as a download |
+| *(no filter)* | Everything combined |
 
-**Response-Struktur:**
+**Response structure:**
 ```json
 {
   "volumes": [...],
@@ -83,33 +83,33 @@ GET /people/{username}/library/search.json
 }
 ```
 
-### 3.2 Volumes (Bücher/Magazine/Collections mit PDF)
+### 3.2 Volumes (books/magazines/collections with a PDF)
 
-**Volume-Summary aus Library Search:**
+**Volume summary from library search:**
 ```json
 {
   "id": 12345,
-  "title": "Mein Strickbuch",
-  "permalink": "mein-strickbuch",
+  "title": "My Knitting Book",
+  "permalink": "my-knitting-book",
   "pattern_author": { "id": 999, "name": "..." }
 }
 ```
 
-**Volume-Details abrufen:**
+**Fetch volume details:**
 ```
 GET /volumes/{volume_id}.json
 ```
 
-**Response-Struktur:**
+**Response structure:**
 ```json
 {
   "volume": {
     "id": 12345,
-    "title": "Mein Strickbuch",
+    "title": "My Knitting Book",
     "volume_attachments": [
       {
         "id": 111,
-        "filename": "mein-strickbuch_DE.pdf",
+        "filename": "my-knitting-book_DE.pdf",
         "content_type": "application/pdf",
         "ravelry_download_url": "https://downloads.ravelry.com/...",
         "file_size": 5242880
@@ -121,10 +121,10 @@ GET /volumes/{volume_id}.json
 }
 ```
 
-**PDF herunterladen:**
+**Download the PDF:**
 ```python
-# KEIN API-auth= mitgeben – aber eine eingeloggte Browser-Session (Cookies)
-# ist nötig, siehe Abschnitt 10.1!
+# DON'T pass API auth= - but a logged-in browser session (cookies) IS
+# needed, see section 10.1!
 response = requests.get(
     volume["volume_attachments"][0]["ravelry_download_url"],
     cookies=browser_cookies,
@@ -134,25 +134,25 @@ response = requests.get(
 
 ---
 
-## 4. Pattern-Downloads (einzeln gekauft)
+## 4. Pattern downloads (individually purchased)
 
-### 4.1 Pattern-Details abrufen
+### 4.1 Fetch pattern details
 
 ```
 GET /patterns/{pattern_id}.json
 ```
 
-**Relevante Felder für Downloads:**
+**Relevant fields for downloads:**
 
-| Feld | Typ | Bedeutung |
+| Field | Type | Meaning |
 |---|---|---|
-| `ravelry_download` | bool | True = direkt auf Ravelry kaufbar/gekauft |
-| `pdf_in_library` | bool | True = PDF bereits in eigener Bibliothek vorhanden |
-| `volumes_in_library` | list | Volume-IDs, in denen das Pattern in der eigenen Bibliothek liegt |
-| `download_location` | list | Download-Infos (s.u.) |
-| `downloadable` | bool | True = überhaupt als Download verfügbar |
+| `ravelry_download` | bool | True = purchasable/purchased directly on Ravelry |
+| `pdf_in_library` | bool | True = PDF already present in your own library |
+| `volumes_in_library` | list | Volume IDs under which the pattern sits in your own library |
+| `download_location` | list | Download info (see below) |
+| `downloadable` | bool | True = available as a download at all |
 
-**`download_location`-Struktur:**
+**`download_location` structure:**
 ```json
 {
   "download_location": [
@@ -165,32 +165,32 @@ GET /patterns/{pattern_id}.json
 }
 ```
 
-> **Hinweis (korrigiert nach Live-Test):** `download_location[].url` ist eine
-> **Kauf-/Checkout-URL** (`/purchase/...` bzw. `/download/{id}/checkout`), KEINE
-> direkte Download-URL für bereits gekaufte Inhalte! Sie leitet auf die
-> Warenkorb-/Checkout-Seite, nicht auf das PDF. Für ein Pattern, das schon in der
-> eigenen Library ist (`pdf_in_library: true`), muss der Download stattdessen über
+> **Note (corrected after live testing):** `download_location[].url` is a
+> **purchase/checkout URL** (`/purchase/...` or `/download/{id}/checkout`), NOT
+> a direct download URL for already purchased content! It redirects to the
+> cart/checkout page, not to the PDF. For a pattern that's already in your
+> own library (`pdf_in_library: true`), the download must instead go through
 > `volumes_in_library` → `/volumes/{id}.json` → `volume_attachments[].ravelry_download_url`
-> erfolgen (siehe Abschnitt 8). Diese URL braucht ebenfalls eine eingeloggte
-> Browser-Session (siehe Abschnitt 10.1).
+> (see section 8). This URL also requires a logged-in browser session (see
+> section 10.1).
 
-### 4.2 Pattern-Suche in der eigenen Bibliothek
+### 4.2 Pattern search in your own library
 
 ```
 GET /people/{username}/library/search.json?type=pattern
 ```
 
-Gibt Pattern zurück, die in der Bibliothek sind (als einzeln gekaufte Ravelry-Downloads).
+Returns patterns that are in the library (as individually purchased Ravelry downloads).
 
-**Response-Struktur (ohne type=pdf):**
+**Response structure (without type=pdf):**
 ```json
 {
   "volumes": [...],
   "patterns": [
     {
       "id": 67890,
-      "name": "Mein Lieblingsmuster",
-      "permalink": "mein-lieblingsmuster",
+      "name": "My Favorite Pattern",
+      "permalink": "my-favorite-pattern",
       "ravelry_download": true,
       "pdf_url": "",
       "download_location": {
@@ -207,14 +207,14 @@ Gibt Pattern zurück, die in der Bibliothek sind (als einzeln gekaufte Ravelry-D
 
 ## 5. Collections / Bundles
 
-Auf Ravelry gibt es zwei Typen:
+Ravelry has two types:
 
-### 5.1 Designer-Bundles (bei Kauf: einzelne Patterns)
+### 5.1 Designer bundles (purchase results in individual patterns)
 
-Wenn ein Designer mehrere Patterns zu einem Bundle bündelt, werden beim Kauf alle enthaltenen Patterns **einzeln** in die Bibliothek eingetragen. Jedes Pattern erscheint dann als `ravelry_download: true` in der Library.  
-→ Werden durch Library-Suche mit `type=pattern` / `type=ravelry` gefunden.
+When a designer bundles multiple patterns into one bundle, all contained patterns are added to the library **individually** on purchase. Each pattern then shows up as `ravelry_download: true` in the library.  
+→ Found via library search with `type=pattern` / `type=ravelry`.
 
-### 5.2 User-eigene Bundles (Favoriten-Sammlungen)
+### 5.2 User-owned bundles (favorites collections)
 
 ```
 GET /people/{username}/bundles/list.json
@@ -222,141 +222,141 @@ GET /people/{username}/bundles/{bundle_id}.json
 POST /people/{username}/bundles/create.json
 ```
 
-Das sind benutzerdefinierte Sammlungen (wie Pinterest-Boards) – keine Kaufobjekte, keine Downloads.
+These are user-defined collections (like Pinterest boards) - not purchase objects, no downloads.
 
 ---
 
-## 6. Alle wichtigen API-Endpunkte (Übersicht)
+## 6. All important API endpoints (overview)
 
 ### Patterns
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/patterns/search.json` | GET | Globale Pattern-Suche |
-| `/patterns/{id}.json` | GET | Pattern-Details (inkl. download_location) |
-| `/patterns.json` | GET | Mehrere Patterns auf einmal (IDs als Param) |
-| `/patterns/{id}/comments.json` | GET | Kommentare zu einem Pattern |
-| `/patterns/{id}/projects.json` | GET | Projekte, die dieses Pattern verwenden |
-| `/pattern_sources/{id}.json` | GET | Quellbuch/-magazin Details |
-| `/pattern_sources/search.json` | GET | Quellbücher suchen |
-| `/pattern_sources/{id}/patterns.json` | GET | Patterns einer Quelle |
-| `/pattern_categories.json` | GET | Alle Pattern-Kategorien |
+| `/patterns/search.json` | GET | Global pattern search |
+| `/patterns/{id}.json` | GET | Pattern details (incl. download_location) |
+| `/patterns.json` | GET | Multiple patterns at once (IDs as a param) |
+| `/patterns/{id}/comments.json` | GET | Comments on a pattern |
+| `/patterns/{id}/projects.json` | GET | Projects that use this pattern |
+| `/pattern_sources/{id}.json` | GET | Source book/magazine details |
+| `/pattern_sources/search.json` | GET | Search source books |
+| `/pattern_sources/{id}/patterns.json` | GET | Patterns from a source |
+| `/pattern_categories.json` | GET | All pattern categories |
 
-**Wichtige Suchfilter für `/patterns/search.json`:**
+**Important search filters for `/patterns/search.json`:**
 
-| Parameter | Werte | Beispiel |
+| Parameter | Values | Example |
 |---|---|---|
-| `availability` | `free`, `ravelry`, `purchase` | `availability=+ravelry` (nur Ravelry-Downloads) |
+| `availability` | `free`, `ravelry`, `purchase` | `availability=+ravelry` (Ravelry downloads only) |
 | `craft` | `knitting`, `crochet` | |
 | `fit` | `adult`, `baby`, `child` | |
-| `pc` | Pattern-Kategorien | `sweater`, `hat`, `shawl` |
+| `pc` | Pattern categories | `sweater`, `hat`, `shawl` |
 | `sort` | `projects`, `favorites`, `date` | |
 | `page`, `page_size` | | |
 
-### Projects (Projekte)
+### Projects
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/projects/{username}/list.json` | GET | Alle Projekte eines Users |
-| `/projects/{username}/{id}.json` | GET | Projekt-Details |
-| `/projects/search.json` | GET | Globale Projekt-Suche |
-| `/projects/{username}/create.json` | POST | Neues Projekt anlegen |
-| `/projects/{username}/{id}.json` | POST | Projekt aktualisieren |
-| `/projects/{username}/{id}.json` | DELETE | Projekt löschen |
+| `/projects/{username}/list.json` | GET | All of a user's projects |
+| `/projects/{username}/{id}.json` | GET | Project details |
+| `/projects/search.json` | GET | Global project search |
+| `/projects/{username}/create.json` | POST | Create a new project |
+| `/projects/{username}/{id}.json` | POST | Update a project |
+| `/projects/{username}/{id}.json` | DELETE | Delete a project |
 
-### Stash (Garnvorrat)
+### Stash (yarn stash)
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/people/{username}/stash/list.json` | GET | Stash-Liste |
-| `/people/{username}/stash/{id}.json` | GET | Stash-Eintrag Details |
-| `/people/{username}/stash/create.json` | POST | Neuen Stash-Eintrag anlegen |
-| `/people/{username}/stash/{id}.json` | POST | Stash-Eintrag aktualisieren |
-| `/people/{username}/stash/{id}.json` | DELETE | Löschen |
-| `/people/{username}/stash/unified/list.json` | GET | Vereinheitlichte Stash-Liste |
-| `/stash/search.json` | GET | Globale Stash-Suche |
+| `/people/{username}/stash/list.json` | GET | Stash list |
+| `/people/{username}/stash/{id}.json` | GET | Stash entry details |
+| `/people/{username}/stash/create.json` | POST | Create a new stash entry |
+| `/people/{username}/stash/{id}.json` | POST | Update a stash entry |
+| `/people/{username}/stash/{id}.json` | DELETE | Delete |
+| `/people/{username}/stash/unified/list.json` | GET | Unified stash list |
+| `/stash/search.json` | GET | Global stash search |
 
-### Yarns (Garne)
+### Yarns
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/yarns/search.json` | GET | Garne suchen |
-| `/yarns/{id}.json` | GET | Garn-Details |
-| `/yarns.json` | GET | Mehrere Garne (IDs als Param) |
-| `/yarn_weights.json` | GET | Alle Garngewichte (Lace, Fingering, DK, ...) |
+| `/yarns/search.json` | GET | Search yarns |
+| `/yarns/{id}.json` | GET | Yarn details |
+| `/yarns.json` | GET | Multiple yarns (IDs as a param) |
+| `/yarn_weights.json` | GET | All yarn weights (Lace, Fingering, DK, ...) |
 
-### Queue (Warteschlange)
+### Queue
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/people/{username}/queue/list.json` | GET | Queue auflisten |
-| `/people/{username}/queue/{id}.json` | GET | Queue-Eintrag Details |
-| `/people/{username}/queue/create.json` | POST | Eintrag anlegen |
-| `/people/{username}/queue/{id}/update.json` | POST | Eintrag aktualisieren |
-| `/people/{username}/queue/{id}/reposition.json` | POST | Reihenfolge ändern |
-| `/people/{username}/queue/{id}.json` | DELETE | Löschen |
+| `/people/{username}/queue/list.json` | GET | List the queue |
+| `/people/{username}/queue/{id}.json` | GET | Queue entry details |
+| `/people/{username}/queue/create.json` | POST | Create an entry |
+| `/people/{username}/queue/{id}/update.json` | POST | Update an entry |
+| `/people/{username}/queue/{id}/reposition.json` | POST | Change order |
+| `/people/{username}/queue/{id}.json` | DELETE | Delete |
 
-### Favorites (Favoriten)
+### Favorites
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/people/{username}/favorites/list.json` | GET | Favoritenliste |
-| `/people/{username}/favorites/{id}.json` | GET | Favoriten-Details |
-| `/people/{username}/favorites/create.json` | POST | Anlegen |
-| `/people/{username}/favorites/{id}.json` | POST | Aktualisieren |
-| `/people/{username}/favorites/{id}.json` | DELETE | Löschen |
-| `/people/{username}/favorites/{id}/add_to_bundle.json` | POST | Zu Bundle hinzufügen |
-| `/people/{username}/favorites/{id}/remove_from_bundle.json` | POST | Aus Bundle entfernen |
+| `/people/{username}/favorites/list.json` | GET | Favorites list |
+| `/people/{username}/favorites/{id}.json` | GET | Favorite details |
+| `/people/{username}/favorites/create.json` | POST | Create |
+| `/people/{username}/favorites/{id}.json` | POST | Update |
+| `/people/{username}/favorites/{id}.json` | DELETE | Delete |
+| `/people/{username}/favorites/{id}/add_to_bundle.json` | POST | Add to bundle |
+| `/people/{username}/favorites/{id}/remove_from_bundle.json` | POST | Remove from bundle |
 
-### People / Nutzer
+### People / Users
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/current_user.json` | GET | Eigener User |
-| `/people/{username}.json` | GET | User-Details |
-| `/people/{username}.json` | POST | User-Daten aktualisieren |
+| `/current_user.json` | GET | Your own user |
+| `/people/{username}.json` | GET | User details |
+| `/people/{username}.json` | POST | Update user data |
 
-### Needles (Nadeln)
+### Needles
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/people/{username}/needles/list.json` | GET | Nadel-Sammlung |
-| `/needles/sizes.json` | GET | Alle Nadelgrößen |
-| `/needles/types.json` | GET | Alle Nadeltypen |
+| `/people/{username}/needles/list.json` | GET | Needle collection |
+| `/needles/sizes.json` | GET | All needle sizes |
+| `/needles/types.json` | GET | All needle types |
 
 ### Shops
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/shops/search.json` | GET | Shops suchen |
-| `/shops/{id}.json` | GET | Shop-Details |
+| `/shops/search.json` | GET | Search shops |
+| `/shops/{id}.json` | GET | Shop details |
 
 ### Volumes / Library
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/people/{username}/library/search.json` | GET | Bibliothek durchsuchen |
-| `/volumes/{id}.json` | GET | Volume-Details (inkl. Attachments) |
-| `/volumes/create.json` | POST | Volume anlegen |
-| `/volumes/{id}.json` | DELETE | Volume löschen |
+| `/people/{username}/library/search.json` | GET | Search the library |
+| `/volumes/{id}.json` | GET | Volume details (incl. attachments) |
+| `/volumes/create.json` | POST | Create a volume |
+| `/volumes/{id}.json` | DELETE | Delete a volume |
 
-### Sonstiges
+### Other
 
-| Endpunkt | Methode | Beschreibung |
+| Endpoint | Method | Description |
 |---|---|---|
-| `/color_families.json` | GET | Farbfamilien |
-| `/yarn_weights.json` | GET | Garngewichte |
-| `/groups/search.json` | GET | Gruppen suchen |
-| `/forums/sets.json` | GET | Forum-Kategorien |
-| `/forums/{id}/topics.json` | GET | Themen in einem Forum |
-| `/messages/list.json` | GET | Nachrichten |
-| `/comments/create.json` | POST | Kommentar erstellen |
+| `/color_families.json` | GET | Color families |
+| `/yarn_weights.json` | GET | Yarn weights |
+| `/groups/search.json` | GET | Search groups |
+| `/forums/sets.json` | GET | Forum categories |
+| `/forums/{id}/topics.json` | GET | Topics in a forum |
+| `/messages/list.json` | GET | Messages |
+| `/comments/create.json` | POST | Create a comment |
 
 ---
 
-## 7. Paginierung
+## 7. Pagination
 
-Alle Listen-Endpunkte liefern `paginator`:
+All list endpoints return a `paginator`:
 ```json
 {
   "paginator": {
@@ -368,7 +368,7 @@ Alle Listen-Endpunkte liefern `paginator`:
 }
 ```
 
-Standard-Iteration:
+Standard iteration:
 ```python
 while page <= data["paginator"]["page_count"]:
     page += 1
@@ -376,58 +376,59 @@ while page <= data["paginator"]["page_count"]:
 
 ---
 
-## 8. PDF-Download-Workflow (komplett, live-verifiziert Okt. 2026)
+## 8. PDF download workflow (complete, live-verified Oct. 2026)
 
-**Zentrale Erkenntnis:** JEDER Library-Eintrag – egal ob eBook, Collection,
-Einzelpattern oder Bundle-Teil – ist technisch ein **Volume**-Objekt. Der
-PDF-Download läuft für alle Varianten über denselben Mechanismus:
+**Core insight:** EVERY library entry - whether an eBook, collection,
+individual pattern, or bundle part - is technically a **Volume** object.
+The PDF download works the same way for all variants:
 
 ```
-library/search.json  (type=pdf ODER ohne Filter)
-    └─> volumes[]  (Summary: id, pattern_id, pattern_source_id, patterns_count, has_downloads)
+library/search.json  (type=pdf OR no filter)
+    └─> volumes[]  (summary: id, pattern_id, pattern_source_id, patterns_count, has_downloads)
          └─> /volumes/{id}.json
                └─> volume_attachments[].ravelry_download_url
-                     └─> Download MIT Browser-Session-Cookie (siehe 10.1)
+                     └─> download WITH browser session cookie (see 10.1)
 ```
 
-Unterscheidung der Volume-Typen anhand der Summary-Felder:
+Distinguishing volume types based on the summary fields:
 
-| Typ | Erkennungsmerkmal |
+| Type | Identifying feature |
 |---|---|
-| **eBook/Buch** | `pattern_id` gesetzt, `patterns_count == 1`, meist mehrere `volume_attachments` (z.B. NL/US-Version + Chart) |
-| **Einzelpattern** | identisch zum eBook-Fall – Ravelry legt für jeden Pattern-Kauf intern ein 1:1-Volume an |
-| **Collection** | `pattern_source_id` gesetzt, `patterns_count > 1`, EIN Volume mit mehreren Attachments (je 1 pro enthaltenem Pattern) |
-| **Bundle** | mehrere Volumes mit `patterns_count == 1`, aber identischem `created_at`-Zeitstempel (= derselbe Checkout) |
+| **eBook/book** | `pattern_id` set, `patterns_count == 1`, usually several `volume_attachments` (e.g. NL/US version + chart) |
+| **Individual pattern** | identical to the eBook case - Ravelry internally creates a 1:1 volume for every pattern purchase |
+| **Collection** | `pattern_source_id` set, `patterns_count > 1`, ONE volume with multiple attachments (1 per contained pattern) |
+| **Bundle** | multiple volumes with `patterns_count == 1`, but an identical `created_at` timestamp (= same checkout) |
 
-### 8.1 download_location.url ist KEINE Download-URL
+### 8.1 download_location.url is NOT a download URL
 
-`pattern.download_location[].url` (z.B. `http://www.ravelry.com/purchase/.../123`
-oder `/download/{id}/checkout`) ist eine **Kauf-/Checkout-URL**. Sie führt zum
-Warenkorb, nicht zum PDF – auch nicht mit gültiger Browser-Session. Ist das
-Pattern bereits gekauft (`pattern.pdf_in_library: true`), muss der Download
-stattdessen über `pattern.volumes_in_library[0]` → `/volumes/{id}.json` laufen.
+`pattern.download_location[].url` (e.g. `http://www.ravelry.com/purchase/.../123`
+or `/download/{id}/checkout`) is a **purchase/checkout URL**. It leads to
+the cart, not to the PDF - even with a valid browser session. If the
+pattern has already been purchased (`pattern.pdf_in_library: true`), the
+download must instead go through `pattern.volumes_in_library[0]` →
+`/volumes/{id}.json`.
 
-### 8.2 Pattern mit externem PDF (z.B. von der Designer-Website)
+### 8.2 Pattern with an external PDF (e.g. from the designer's website)
 
 ```
 /patterns/{id}.json
-    └─> pdf_url  (externe URL, nicht immer funktionsfähig)
+    └─> pdf_url  (external URL, not always functional)
     └─> download_location[].url  (type="web", "external", etc.)
 ```
 
-> Diese können nicht automatisch heruntergeladen werden – die Designer-Website braucht ggf. eigene Authentifizierung.
+> These can't be downloaded automatically - the designer's website may require its own authentication.
 
 ---
 
-## 9. Wichtige Datenstrukturen
+## 9. Important data structures
 
-### Pattern (gekürzt)
+### Pattern (shortened)
 
 ```json
 {
   "id": 67890,
-  "name": "Socken Muster",
-  "permalink": "socken-muster",
+  "name": "Sock Pattern",
+  "permalink": "sock-pattern",
   "free": false,
   "price": "5.00",
   "currency": "EUR",
@@ -454,23 +455,23 @@ stattdessen über `pattern.volumes_in_library[0]` → `/volumes/{id}.json` laufe
 }
 ```
 
-### Volume (gekürzt)
+### Volume (shortened)
 
 ```json
 {
   "id": 12345,
-  "title": "Mein Strickbuch",
+  "title": "My Knitting Book",
   "volume_attachments": [
     {
       "id": 111,
-      "filename": "MeinStrickbuch_DE.pdf",
+      "filename": "MyKnittingBook_DE.pdf",
       "content_type": "application/pdf",
       "ravelry_download_url": "https://downloads.ravelry.com/...",
       "file_size": 5242880
     },
     {
       "id": 112,
-      "filename": "MeinStrickbuch_EN.pdf",
+      "filename": "MyKnittingBook_EN.pdf",
       "content_type": "application/pdf",
       "ravelry_download_url": "https://downloads.ravelry.com/...",
       "file_size": 4800000
@@ -478,22 +479,22 @@ stattdessen über `pattern.volumes_in_library[0]` → `/volumes/{id}.json` laufe
   ],
   "pattern_source": {
     "id": 555,
-    "name": "Mein Strickbuch",
+    "name": "My Knitting Book",
     "author": "Designer Name"
   }
 }
 ```
 
-### Stash-Eintrag (gekürzt)
+### Stash entry (shortened)
 
 ```json
 {
   "id": 44444,
-  "name": "Merino Blau",
+  "name": "Merino Blue",
   "yarn_company_name": "Lang Yarns",
   "yarn_name": "Merino 120",
   "colorway_name": "Indigo",
-  "location": "Kiste 3",
+  "location": "Box 3",
   "strands_per_skein": 1,
   "grams_per_skein": 100,
   "yards_per_skein": 130,
@@ -503,52 +504,52 @@ stattdessen über `pattern.volumes_in_library[0]` → `/volumes/{id}.json` laufe
 
 ---
 
-## 10. Rate Limits & Best Practices
+## 10. Rate limits & best practices
 
-- Kein offiziell dokumentiertes Rate-Limit, aber **0.3s Pause** zwischen Requests empfohlen
-- Max. `page_size = 100` (manche Endpunkte weniger)
-- Bei REST-API-Calls (`api.ravelry.com`) immer `auth=AUTH` (Basic Auth mit den API-Keys) setzen
+- No officially documented rate limit, but a **0.3s pause** between requests is recommended
+- Max. `page_size = 100` (some endpoints less)
+- For REST API calls (`api.ravelry.com`), always set `auth=AUTH` (Basic Auth with the API keys)
 
-### 10.1 Zwei getrennte Auth-Systeme bei Downloads (wichtig!)
+### 10.1 Two separate auth systems for downloads (important!)
 
-Live-getestet (Oktober 2026) mit echten gekauften/hinzugefügten Library-Inhalten:
+Live-tested (October 2026) with real purchased/added library content:
 
-| Download-Typ | URL-Muster | Benötigte Auth |
+| Download type | URL pattern | Auth required |
 |---|---|---|
-| **Kostenloses Pattern** | `/dls/{id}/{code}` | Keine – leitet direkt auf eine zeitlich begrenzte, vorsignierte S3-URL weiter |
-| **Alles andere** (`volume_attachments[].ravelry_download_url`) | `/download/{id}/checkout` | **Eingeloggte Browser-Session** (Cookies) – API-Keys werden NICHT akzeptiert |
+| **Free pattern** | `/dls/{id}/{code}` | None - redirects directly to a time-limited, pre-signed S3 URL |
+| **Everything else** (`volume_attachments[].ravelry_download_url`) | `/download/{id}/checkout` | **Logged-in browser session** (cookies) - API keys are NOT accepted |
 
-Ohne gültige Session liefert `/download/{id}/checkout` eine HTML-Login-Seite
-(`<title>Ravelry</title>` bzw. `<title>Ravelry: Checking out...</title>`)
-statt des PDFs – erkennbar am `Content-Type: text/html` und fehlender
-`%PDF-`-Signatur im Response-Body.
+Without a valid session, `/download/{id}/checkout` returns an HTML login
+page (`<title>Ravelry</title>` or `<title>Ravelry: Checking out...</title>`)
+instead of the PDF - recognizable by the `Content-Type: text/html` and the
+missing `%PDF-` signature in the response body.
 
-**Praktische Lösung:** Browser-Login per [Playwright](https://playwright.dev/python/)
-automatisieren – ein sichtbares Chromium-Fenster öffnen, Nutzer loggt sich manuell
-ein (2FA-fähig), danach `context.cookies()` abgreifen und bei allen folgenden
-`requests.get(url, cookies=...)`-Aufrufen mitschicken. Session-Cookies halten
-typischerweise mehrere Tage bis Wochen und können lokal zwischengespeichert werden,
-um nicht bei jedem Lauf neu einzuloggen. Implementiert in `ravelry_common.py`
+**Practical solution:** automate browser login via [Playwright](https://playwright.dev/python/) -
+open a visible Chromium window, the user logs in manually (2FA-capable),
+then grab `context.cookies()` and pass them along with all subsequent
+`requests.get(url, cookies=...)` calls. Session cookies typically last
+several days to weeks and can be cached locally, so you don't need to log
+in again on every run. Implemented in `ravelry_common.py`
 (`ensure_browser_login()`).
 
 ---
 
-## 11. Nicht-öffentliche / Dokumentationslücken
+## 11. Non-public / documentation gaps
 
-Die offizielle Ravelry-API-Doku ist nur nach Login zugänglich. Live-verifiziert
-(Oktober 2026, siehe Abschnitt 8 und 10.1):
+The official Ravelry API docs are only accessible after logging in.
+Live-verified (October 2026, see sections 8 and 10.1):
 
-- ✅ **Geklärt:** `library/search.json` liefert IMMER `volumes[]` zurück (kein
-  separates `patterns[]`-Array) – auch für Einzelpattern und Bundle-Teile.
-  Relevante Felder: `id`, `pattern_id`, `pattern_source_id`, `patterns_count`,
-  `has_downloads`, `created_at`.
-- ✅ **Geklärt:** `download_location[].url` ist eine Kauf-URL, nicht die
-  PDF-Download-URL (siehe 8.1).
-- ✅ **Geklärt:** `volume_attachments[].ravelry_download_url` erfordert eine
-  eingeloggte Browser-Session, nicht die REST-API-Keys (siehe 10.1).
+- ✅ **Clarified:** `library/search.json` ALWAYS returns `volumes[]` (no
+  separate `patterns[]` array) - even for individual patterns and bundle
+  parts. Relevant fields: `id`, `pattern_id`, `pattern_source_id`,
+  `patterns_count`, `has_downloads`, `created_at`.
+- ✅ **Clarified:** `download_location[].url` is a purchase URL, not the
+  PDF download URL (see 8.1).
+- ✅ **Clarified:** `volume_attachments[].ravelry_download_url` requires a
+  logged-in browser session, not the REST API keys (see 10.1).
 
-Weiterhin unklar / kann sich ändern:
+Still unclear / may change:
 
-- Exakte Ablaufzeit der Browser-Session-Cookies
-- Ob/wie sich das Verhalten bei OAuth2-Apps (statt Personal Key) unterscheidet
-- Genaue `type`-Werte für `library/search.json` jenseits von `pdf`
+- Exact expiry time of the browser session cookies
+- Whether/how behavior differs for OAuth2 apps (instead of a personal key)
+- Exact `type` values for `library/search.json` beyond `pdf`

@@ -1,9 +1,9 @@
 """
-Pytest-Konfiguration und gemeinsame Fixtures für die Ravelry-Testsuite.
+Pytest configuration and shared fixtures for the Ravelry test suite.
 
-Scripts mit Bindestrich im Dateinamen (z.B. ravelry-downloader.py) sind keine
-gültigen Python-Modulnamen und können daher nicht per `import` eingebunden
-werden. Die `downloader`-Fixture lädt sie stattdessen über importlib.
+Scripts with a hyphen in the filename (e.g. ravelry-downloader.py) are not
+valid Python module names and therefore can't be included via `import`.
+The `downloader` fixture loads them instead via importlib.
 """
 
 from __future__ import annotations
@@ -15,15 +15,15 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))  # damit `import ravelry_common` funktioniert
+sys.path.insert(0, str(ROOT))  # so that `import ravelry_common` works
 
 
 def _load_script_module(filename: str, modname: str):
-    """Lädt ein Script mit Bindestrich-Dateinamen als importierbares Modul.
+    """Loads a script with a hyphenated filename as an importable module.
 
-    Der `if __name__ == "__main__":`-Guard in den Scripts verhindert, dass
-    main() (= echte API-Calls, echte Downloads) beim Import ausgeführt wird,
-    da __name__ hier auf `modname` steht statt auf "__main__".
+    The `if __name__ == "__main__":` guard in the scripts prevents main()
+    (= real API calls, real downloads) from running on import, since
+    __name__ is set to `modname` here instead of "__main__".
     """
     spec = importlib.util.spec_from_file_location(modname, ROOT / filename)
     module = importlib.util.module_from_spec(spec)
@@ -34,19 +34,19 @@ def _load_script_module(filename: str, modname: str):
 
 @pytest.fixture(scope="session")
 def downloader():
-    """Lädt ravelry-downloader.py einmal pro Testsession als Modul."""
+    """Loads ravelry-downloader.py once per test session as a module."""
     return _load_script_module("ravelry-downloader.py", "ravelry_downloader_module")
 
 
 @pytest.fixture
 def isolated_download_dir(tmp_path, downloader, monkeypatch):
     """
-    Isoliert DOWNLOAD_DIR / IGNORE_FILE / COLLECTION_SYNC_FILE /
-    SKIPPED_REPORT_FILE / EXCLUDED_LOG_FILE in ein temporäres Verzeichnis,
-    damit Tests niemals die echten Dateien unter ravelry_downloads/
-    (insb. die echte ignore.txt) berühren. Setzt außerdem den modul-globalen
-    excluded_this_run-Zustand zurück, damit Tests sich nicht gegenseitig
-    über try_download()-Aufrufe hinweg beeinflussen.
+    Isolates DOWNLOAD_DIR / IGNORE_FILE / COLLECTION_SYNC_FILE /
+    SKIPPED_REPORT_FILE / EXCLUDED_LOG_FILE in a temporary directory, so
+    that tests never touch the real files under ravelry_downloads/ (in
+    particular the real ignore.txt). Also resets the module-global
+    excluded_this_run state, so tests don't affect each other across
+    try_download() calls.
     """
     download_dir = tmp_path / "ravelry_downloads"
     download_dir.mkdir()

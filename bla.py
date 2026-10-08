@@ -19,7 +19,7 @@ PERSONAL_KEY = os.getenv("RAVELRY_PERSONAL_KEY")
 COOKIES = os.getenv("RAVELRY_SESSION_COOKIE")
 
 if not ACCESS_KEY or not PERSONAL_KEY:
-    raise ValueError("Fehler: RAVELRY_ACCESS_KEY oder RAVELRY_PERSONAL_KEY fehlt!")
+    raise ValueError("Error: RAVELRY_ACCESS_KEY or RAVELRY_PERSONAL_KEY is missing!")
 
 BASE_URL = "https://api.ravelry.com"
 AUTH = (ACCESS_KEY, PERSONAL_KEY)
@@ -41,7 +41,7 @@ def load_ignore_patterns(ignore_filepath: str) -> list[str]:
     if not os.path.exists(ignore_filepath):
         os.makedirs(os.path.dirname(ignore_filepath), exist_ok=True)
         with open(ignore_filepath, "w", encoding="utf-8") as f:
-            f.write("# Ignorier-Muster (z.B. _NL.pdf)\n")
+            f.write("# Ignore patterns (e.g. _NL.pdf)\n")
         return []
 
     patterns = []
@@ -63,7 +63,7 @@ def fetch_library_volumes(username: str) -> list:
     page = 1
     page_size = 50
 
-    print("Lade Bibliotheksübersicht...")
+    print("Loading library overview...")
     while True:
         url = f"{BASE_URL}/people/{username}/library/search.json"
         params = {"page": page, "page_size": page_size, "type": "pdf"}
@@ -81,23 +81,23 @@ def fetch_library_volumes(username: str) -> list:
             break
         page += 1
 
-    print(f"Insgesamt {len(volumes)} digitale Einträge in der Bibliothek gefunden.\n")
+    print(f"Found a total of {len(volumes)} digital entries in the library.\n")
     return volumes
 
 
 def get_file_url_from_api(attachment_id: int) -> str | None:
-    """Fragt die Attachment-Details direkt über die API ab, um den echten S3-Link zu bekommen."""
+    """Queries the attachment details directly via the API to get the real S3 link."""
     url = f"{BASE_URL}/attachments/{attachment_id}.json"
     res = requests.get(url, auth=AUTH)
     if res.status_code == 200:
         att_data = res.json().get("attachment", {})
-        # file_url ist die direkte S3-URL
+        # file_url is the direct S3 URL
         return att_data.get("file_url") or att_data.get("url")
     return None
 
 
 def download_file(direct_url: str, target_path: str):
-    """Lädt die Datei von S3 herunter (OHNE Ravelry Basic Auth, da S3 Auth-Header ablehnt)."""
+    """Downloads the file from S3 (WITHOUT Ravelry Basic Auth, since S3 rejects the auth header)."""
     res = requests.get(direct_url, stream=True)
     res.raise_for_status()
 
@@ -106,12 +106,12 @@ def download_file(direct_url: str, target_path: str):
     first_chunk = next(chunks, None)
 
     if not first_chunk:
-        raise ValueError("Datei ist leer (0 Bytes).")
+        raise ValueError("File is empty (0 bytes).")
 
-    # Prüfung auf echten PDF-Header
+    # Check for an actual PDF header
     if not first_chunk.startswith(b"%PDF-") and "application/pdf" not in content_type.lower():
         preview = first_chunk[:300].decode("utf-8", errors="ignore")
-        raise ValueError(f"Antwort ist kein PDF (Content-Type: {content_type}). Vorschau:\n{preview.strip()}")
+        raise ValueError(f"Response is not a PDF (Content-Type: {content_type}). Preview:\n{preview.strip()}")
 
     with open(target_path, "wb") as f:
         f.write(first_chunk)
@@ -130,12 +130,12 @@ def process_library_downloads(username: str, volumes: list):
     for index, vol_summary in enumerate(volumes, start=1):
         vol_id = vol_summary.get("id")
         title = vol_summary.get("title") or f"Volume_{vol_id}"
-        print(f"[{index}/{len(volumes)}] Prüfe: {title}")
+        print(f"[{index}/{len(volumes)}] Checking: {title}")
 
         vol_url = f"{BASE_URL}/volumes/{vol_id}.json"
         res = requests.get(vol_url, auth=AUTH)
         if res.status_code != 200:
-            print(f"  ⚠️ Details konnten nicht geladen werden (HTTP {res.status_code})")
+            print(f"  ⚠️ Could not load details (HTTP {res.status_code})")
             continue
 
         vol_data = res.json().get("volume", {})
@@ -150,39 +150,39 @@ def process_library_downloads(username: str, volumes: list):
                 clean_file_name += ".pdf"
 
             if is_ignored(clean_file_name, ignore_patterns):
-                print(f"  🚫 Übersprungen (in ignore.txt gefiltert): {clean_file_name}")
+                print(f"  🚫 Skipped (filtered by ignore.txt): {clean_file_name}")
                 skipped_ignore_count += 1
                 continue
 
             target_path = os.path.join(DOWNLOAD_DIR, clean_file_name)
 
             if os.path.exists(target_path):
-                print(f"  ➜ Übersprungen (bereits vorhanden): {clean_file_name}")
+                print(f"  ➜ Skipped (already present): {clean_file_name}")
                 continue
 
             try:
-                # Echten S3-Link über Attachment-API ermitteln (file_url)
+                # Get the real S3 link via the attachment API (file_url)
                 direct_url = att.get("file_url")
                 if not direct_url and att_id:
                     direct_url = get_file_url_from_api(att_id)
 
                 if not direct_url:
-                    print(f"  ⚠️ Kein direkter Dateilink verfügbar für: {clean_file_name}")
+                    print(f"  ⚠️ No direct file link available for: {clean_file_name}")
                     continue
 
-                print(f"  ⬇️ Lade herunter: {clean_file_name} ...")
+                print(f"  ⬇️ Downloading: {clean_file_name} ...")
                 download_file(direct_url, target_path)
                 downloaded_count += 1
                 time.sleep(0.3)
 
             except Exception as e:
-                print(f"  ❌ Fehler beim Download von {clean_file_name}: {e}")
+                print(f"  ❌ Error downloading {clean_file_name}: {e}")
 
-    print(f"\nFertig! {downloaded_count} neue PDF(s) heruntergeladen.")
+    print(f"\nDone! Downloaded {downloaded_count} new PDF(s).")
 
 
 if __name__ == "__main__":
     username = get_current_username()
-    print(f"Eingeloggt als: {username}\n")
+    print(f"Logged in as: {username}\n")
     volumes = fetch_library_volumes(username)
     process_library_downloads(username, volumes)

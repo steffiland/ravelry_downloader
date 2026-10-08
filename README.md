@@ -1,48 +1,48 @@
 # Ravelry Tools
 
-Python-Scripts zum Herunterladen von Patterns und PDFs aus dem eigenen Ravelry-Account.
+Python scripts for downloading patterns and PDFs from your own Ravelry account.
 
 ---
 
-## Voraussetzungen
+## Requirements
 
-- [uv](https://docs.astral.sh/uv/) installiert (`uv 0.12+`)
-- Python 3.12 (wird von uv automatisch verwaltet)
-- Ravelry-Account mit [Pro/Developer-Zugang](https://www.ravelry.com/pro/developer)
-- Für Browser-Login (kostenpflichtige Downloads, siehe unten): Playwright-Browser
-  einmalig installieren (siehe Setup Schritt 3)
+- [uv](https://docs.astral.sh/uv/) installed (`uv 0.12+`)
+- Python 3.12 (managed automatically by uv)
+- A Ravelry account with [Pro/Developer access](https://www.ravelry.com/pro/developer)
+- For browser login (paid downloads, see below): install the Playwright
+  browser once (see setup step 3)
 
 ---
 
 ## Setup
 
-### 1. API-Keys holen
+### 1. Get API keys
 
-Auf [ravelry.com/pro/developer](https://www.ravelry.com/pro/developer) eine App anlegen:
-- Auth-Typ: **Basic Auth: Personal Key**
-- Ergibt zwei Keys: **Access Key** (= Username) und **Personal Key** (= Password)
+Create an app at [ravelry.com/pro/developer](https://www.ravelry.com/pro/developer):
+- Auth type: **Basic Auth: Personal Key**
+- Produces two keys: **Access Key** (= username) and **Personal Key** (= password)
 
-### 2. `.env`-Datei anlegen
+### 2. Create a `.env` file
 
 ```
-RAVELRY_ACCESS_KEY=dein_access_key
-RAVELRY_PERSONAL_KEY=dein_personal_key
+RAVELRY_ACCESS_KEY=your_access_key
+RAVELRY_PERSONAL_KEY=your_personal_key
 ```
 
-Die `.env` liegt im Projektroot und ist über `.gitignore` vom Commit ausgeschlossen.
+The `.env` file lives in the project root and is excluded from commits via `.gitignore`.
 
-### 3. Playwright-Browser installieren (einmalig)
+### 3. Install the Playwright browser (one time)
 
-Für Downloads kostenpflichtiger Inhalte wird ein echter Browser-Login benötigt
-(Details siehe Abschnitt „Browser-Login" unten). Dafür einmalig die
-Chromium-Binaries von Playwright installieren:
+Downloading paid content requires an actual browser login (see the
+"Browser login" section below for details). For this, install the
+Chromium binaries from Playwright once:
 
 ```bash
 uv run --project . python3 -m playwright install chromium
 ```
 
-Unter WSL/Linux werden ggf. zusätzliche System-Bibliotheken benötigt
-(Audio/Mesa/Font/X11), die der Browser zum headful-Start braucht:
+On WSL/Linux, additional system libraries may be needed
+(audio/Mesa/font/X11) for the browser to start in headful mode:
 
 ```bash
 sudo uv run --project . python3 -m playwright install-deps chromium
@@ -50,113 +50,115 @@ sudo uv run --project . python3 -m playwright install-deps chromium
 
 ---
 
-## Scripts ausführen
+## Running the scripts
 
-Alle Scripts sind **selbstständig ausführbar** mit `uv run` – sie deklarieren ihre
-Abhängigkeiten im Datei-Header (`# /// script`), uv installiert diese automatisch
-in ein temporäres Venv. Gemeinsame Logik (API-Zugriff, Downloads, Browser-Login)
-liegt in `ravelry_common.py`, das von allen Scripts importiert wird.
+All scripts are **self-contained and runnable** with `uv run` - they declare
+their dependencies in the file header (`# /// script`), and uv installs
+them automatically into a temporary venv. Shared logic (API access,
+downloads, browser login) lives in `ravelry_common.py`, which is imported
+by all scripts.
 
-### Download-Test (`ravelry-test.py`)
+### Download test (`ravelry-test.py`)
 
-Testet alle Pattern-Varianten (kostenlos, kostenpflichtig, Einzelkauf, eBook,
-Collection, Bundle) und lädt jeweils das erste Exemplar herunter. Nützlich zum
-Debuggen und Erkunden der API-Struktur.
+Tests all pattern variants (free, paid, individual purchase, eBook,
+collection, bundle) and downloads the first example of each. Useful for
+debugging and exploring the API structure.
 
 ```bash
 uv run ravelry-test.py
-# oder über die Projekt-Umgebung:
+# or via the project environment:
 uv run --project . ravelry-test.py
 ```
 
-Downloads landen in `test_downloads/`.
+Downloads end up in `test_downloads/`.
 
-### Vollständiger Bibliotheks-Download (`ravelry-downloader.py`)
+### Full library download (`ravelry-downloader.py`)
 
-Lädt alle PDFs aus der eigenen Ravelry-Bibliothek herunter (eBooks/Collections +
-Einzelpattern), mit Skip-Logik für bereits vorhandene Dateien.
+Downloads all PDFs from your own Ravelry library (eBooks/collections +
+individual patterns), with skip logic for files that already exist.
 
 ```bash
 uv run ravelry-downloader.py
-# oder über die Projekt-Umgebung:
+# or via the project environment:
 uv run --project . ravelry-downloader.py
 ```
 
-Downloads landen in `ravelry_downloads/`.
+Downloads end up in `ravelry_downloads/`.
 
-Der Downloader verarbeitet drei Arten von Library-Einträgen:
+The downloader processes three types of library entries:
 
-1. **eBooks/Collections mit eigenem PDF-Bundle** (`type=pdf`-Volumes)
-2. **Einzeln gekaufte Pattern** (eigenes 1:1-Volume pro Pattern)
-3. **Referenz-Collections** – Collections, die selbst KEIN PDF-Bundle haben,
-   sondern nur auf mehrere einzeln verlinkte Pattern verweisen (z. B.
-   Yarn-Hersteller-Sammlungen wie Scheepjes „YARN – The After Party", aber auch
-   alte Zeitschriften-Ausgaben, die man z. B. nur zur Recherche in die Library
-   aufgenommen hat, ohne sie bei Ravelry gekauft zu haben)
+1. **eBooks/collections with their own PDF bundle** (`type=pdf` volumes)
+2. **Individually purchased patterns** (own 1:1 volume per pattern)
+3. **Reference collections** - collections that have NO PDF bundle of
+   their own, but only reference multiple individually linked patterns
+   (e.g. yarn manufacturer collections like Scheepjes "YARN - The After
+   Party", but also old magazine issues added to the library purely for
+   research purposes, without having been bought on Ravelry)
 
-**Zwei getrennte Steuer-Dateien mit UNTERSCHIEDLICHER Logik:**
+**Two separate control files with DIFFERENT logic:**
 
-| Datei | Logik | Gilt für |
+| File | Logic | Applies to |
 |---|---|---|
-| `ravelry_downloads/ignore.txt` | **EXCLUDE** – alles wird geladen, außer was hier als Dateinamen-Fragment steht (z. B. `_NL.pdf`) | ALLE Downloads, auch Dateien innerhalb einer per `collections.txt` aktivierten Referenz-Collection |
-| `ravelry_downloads/collections.txt` | **INCLUDE** – nichts wird geladen, außer eine Collection ist hier explizit aktiviert | NUR Referenz-Collections (Variante 3) |
+| `ravelry_downloads/ignore.txt` | **EXCLUDE** - everything is downloaded except what's listed here as a filename fragment (e.g. `_NL.pdf`) | ALL downloads, including files within a reference collection activated via `collections.txt` |
+| `ravelry_downloads/collections.txt` | **INCLUDE** - nothing is downloaded unless a collection is explicitly activated here | ONLY reference collections (variant 3) |
 
-Beide Dateien werden beim ersten Start automatisch mit Beispiel-Inhalt angelegt.
+Both files are automatically created with example content on first run.
 
-**`collections.txt`-Syntax** (Katalog zum Review, Opt-in statt Opt-out):
+**`collections.txt` syntax** (a catalog for review, opt-in instead of opt-out):
 
 ```
-collection:213142                 <- AKTIV, wird heruntergeladen
-#collection:393415                 <- INAKTIV (Standard für neue Funde)
+collection:213142                 <- ACTIVE, will be downloaded
+#collection:393415                 <- INACTIVE (default for new finds)
 ```
 
-Bei jedem Lauf trägt das Script neu gefundene Referenz-Collections automatisch
-**inaktiv** (mit führendem `#`) ein – so entsteht eine vollständige, durchsuchbare
-Katalogliste aller jemals gefundenen Collections, ohne dass versehentlich etwas
-heruntergeladen wird. Zum Aktivieren einfach das führende `#` vor der Zeile
-entfernen. Welche IDs schon einmal in den Katalog eingetragen wurden, merkt sich
-das Script in `ravelry_downloads/.collection_sync.json`, damit eine bekannte
-Collection beim nächsten Lauf nicht erneut angehängt wird – unabhängig davon,
-ob du sie inzwischen aktiviert hast oder nicht.
+On every run, the script automatically adds newly found reference
+collections as **inactive** (with a leading `#`) - this builds a
+complete, searchable catalog of all collections ever found, without
+anything being downloaded by accident. To activate, simply remove the
+leading `#` before the line. The script remembers which IDs have already
+been added to the catalog in `ravelry_downloads/.collection_sync.json`,
+so a known collection doesn't get appended again on the next run -
+regardless of whether you've since activated it or not.
 
-**Verarbeitungsreihenfolge** (innerhalb jeder Stufe in der Reihenfolge, wie die
-Ravelry-API die Library paginiert zurückgibt – keine eigene Sortierung):
+**Processing order** (within each stage, in the order the Ravelry API
+paginates the library - no custom sort order applied):
 
-1. Volumes mit eigenem PDF-Bundle (eBooks, Collections mit Attachments)
-2. Einzeln gekaufte Pattern
-3. Referenz-Collections (nur aktivierte, Mitglieder werden einzeln nachgeladen)
-4. Transparenz-Report für Einträge ohne Download-Pfad
-5. Log der nicht heruntergeladenen Einträge
+1. Volumes with their own PDF bundle (eBooks, collections with attachments)
+2. Individually purchased patterns
+3. Reference collections (only activated ones, members downloaded individually)
+4. Transparency report for entries without a download path
+5. Log of entries not downloaded
 
-**Log-Dateien** (werden bei jedem Lauf überschrieben, zeigen also den Stand des
-*letzten* Laufs, nicht kumulativ über mehrere Läufe):
+**Log files** (overwritten on every run, so they show the state of the
+*last* run, not cumulative across multiple runs):
 
-| Datei | Inhalt |
+| File | Content |
 |---|---|
-| `ravelry_downloads/skipped_non_downloadable.txt` | Library-Einträge ohne erkennbaren Download-Pfad (z. B. extern erworbene Zeitschriften-Einzelhefte oder Etsy-Käufe, die nur zur Recherche in der Library stehen) |
-| `ravelry_downloads/excluded_by_ignore.txt` | Dateien/Collections, die in diesem Lauf NICHT heruntergeladen wurden (per `ignore.txt` oder fehlender Freigabe in `collections.txt`) |
+| `ravelry_downloads/skipped_non_downloadable.txt` | Library entries without a recognizable download path (e.g. externally acquired single magazine issues or Etsy purchases that are in the library only for research purposes) |
+| `ravelry_downloads/excluded_by_ignore.txt` | Files/collections that were NOT downloaded in this run (due to `ignore.txt` or missing opt-in in `collections.txt`) |
 
-Beide sind reine Logs, kein Steuer-Mechanismus – Ausschlüsse/Freigaben selbst
-steuern weiterhin `ignore.txt` bzw. `collections.txt`.
+Both are pure logs, not a control mechanism - exclusions/opt-ins are
+still controlled by `ignore.txt` or `collections.txt` directly.
 
-> 🔗 `ravelry_downloads/` kann (und sollte bei größeren Bibliotheken) ein
-> **Symlink auf ein NAS-Verzeichnis** sein, statt lokal auf der Platte zu
-> liegen – gerade unter WSL, wo lokaler Speicherverbrauch in die dynamisch
-> wachsende VHDX einfließt (siehe Warnhinweis unten). `ensure_download_dir()`
-> erkennt Symlinks und bricht kontrolliert ab, falls das Linkziel (NAS-Mount)
-> gerade nicht erreichbar ist, statt versehentlich einen neuen lokalen Ordner
-> anzulegen. Die `tests/`-Suite berührt `ravelry_downloads/` grundsätzlich
-> nicht – sie arbeitet ausschließlich in pytest-eigenen `tmp_path`-Verzeichnissen.
+> 🔗 `ravelry_downloads/` can (and for larger libraries, should) be a
+> **symlink to a NAS directory** instead of living locally on disk -
+> especially under WSL, where local disk usage feeds into the dynamically
+> growing VHDX (see the warning below). `ensure_download_dir()` detects
+> symlinks and aborts in a controlled way if the link target (NAS mount)
+> is currently unreachable, instead of accidentally creating a new local
+> folder. The `tests/` suite never touches `ravelry_downloads/` at all -
+> it works exclusively in pytest's own `tmp_path` directories.
 
-> ⚠️ Bei einer großen Bibliothek (hunderte Einträge, teils zweistellige MB pro PDF)
-> kann ein kompletter Lauf viel Speicherplatz brauchen. Unter WSL wächst die virtuelle
-> Festplatte (VHDX) dabei dynamisch mit und schrumpft nach dem Löschen der Dateien
-> **nicht automatisch** wieder. Bei Bedarf: `wsl --manage <Distro> --compact`
-> (Windows 11) oder `diskpart` + `compact vdisk`.
+> ⚠️ For a large library (hundreds of entries, sometimes double-digit MB
+> per PDF), a full run can require significant disk space. Under WSL, the
+> virtual disk (VHDX) grows dynamically along with it and does **not**
+> shrink automatically after deleting the files. If needed:
+> `wsl --manage <Distro> --compact` (Windows 11) or `diskpart` +
+> `compact vdisk`.
 
-### Stash & Projekte anzeigen (`ravelry.py`)
+### View stash & projects (`ravelry.py`)
 
-Gibt eine Pandas-Übersicht der eigenen Projekte und Garnvorräte aus.
+Prints a Pandas overview of your own projects and yarn stash.
 
 ```bash
 uv run ravelry.py
@@ -166,127 +168,131 @@ uv run ravelry.py
 
 ## Tests
 
-Die Logik ohne Netzwerk-/Browser-Abhängigkeit (Ignore-Filter, Collection-Sync,
-Dateinamen-Bereinigung, PDF-Signaturprüfung) ist mit `pytest` abgedeckt unter
-`tests/`. Tests laufen vollständig offline mit synthetischen Fixtures – keine
-echten API-Calls, kein Browser, keine Downloads.
+The logic that doesn't depend on network/browser access (ignore filter,
+collection sync, filename sanitization, PDF signature check) is covered
+by `pytest` under `tests/`. Tests run entirely offline with synthetic
+fixtures - no real API calls, no browser, no downloads.
 
 ```bash
 uv run --project . pytest -v
 ```
 
-| Testdatei | Deckt ab |
+| Test file | Covers |
 |---|---|
-| `test_ignore_logic.py` | `ignore.txt`-Parsing (EXCLUDE) und `collections.txt`-Parsing (INCLUDE), Inline-Kommentare |
-| `test_collection_sync.py` | Referenz-Collection-Erkennung, Katalog-Sync (inaktive Einträge), Idempotenz |
-| `test_categorization.py` | Kategorisierung aller Library-Eintrags-Formen, Transparenz-Report |
-| `test_excluded_log.py` | Log der nicht heruntergeladenen Einträge |
-| `test_ravelry_common.py` | Dateinamen-Bereinigung, PDF-Erkennung, Cookie-Validierung |
+| `test_ignore_logic.py` | `ignore.txt` parsing (EXCLUDE) and `collections.txt` parsing (INCLUDE), inline comments |
+| `test_collection_sync.py` | Reference collection detection, catalog sync (inactive entries), idempotency |
+| `test_categorization.py` | Categorization of all library entry shapes, transparency report |
+| `test_excluded_log.py` | Log of entries not downloaded |
+| `test_ravelry_common.py` | Filename sanitization, PDF detection, cookie validation |
 
-Bei jeder Änderung an `ravelry-downloader.py` oder `ravelry_common.py` sollten
-diese Tests vor dem nächsten echten Lauf grün sein – sie fangen Logikfehler
-(z. B. im `ignore.txt`-Parser) ab, ohne dafür die eigene Bibliothek anfassen
-oder PDFs herunterladen zu müssen.
+For every change to `ravelry-downloader.py` or `ravelry_common.py`, these
+tests should pass before the next real run - they catch logic errors
+(e.g. in the `ignore.txt` parser) without having to touch your own
+library or download PDFs.
 
-**Wichtig: Die Tests nutzen ausschließlich synthetische Fixtures** (fest
-einprogrammierte Beispiel-Dicts, z. B. in `test_categorization.py` die echten
-Titel aus einer Live-Analyse der Library). Sie machen **keine** echten
-API-Calls. Das bedeutet:
+**Important: the tests use exclusively synthetic fixtures** (hardcoded
+example dicts, e.g. in `test_categorization.py` the real titles from a
+live analysis of the library). They make **no** real API calls. This
+means:
 
-- Ändert sich deine echte Ravelry-Bibliothek (neue Pattern, neue Collections,
-  gelöschte Einträge), bleiben alle Tests unverändert grün – sie reagieren
-  nicht automatisch darauf, weil sie nie mit den echten Daten sprechen.
-- Die Tests schützen vor **Logikfehlern** im Code (z. B. dem gefundenen Bug,
-  bei dem Inline-Kommentare in `ignore.txt` nicht korrekt abgeschnitten
-  wurden), nicht aber davor, dass Ravelry künftig eine **neue, bisher
-  unbekannte Daten-Form** liefert, die durch keine der fünf Kategorien in
-  `categorize_item()` abgedeckt ist.
-- Taucht ein neues Konstrukt in der echten Library auf, das aktuell nicht
-  passt, würde es als `orphan` oder `single_pattern_source` landen und im
-  `skipped_non_downloadable.txt`-Report sichtbar werden (nie lautlos
-  verschwinden) – aber ein Test dafür müsste erst manuell nachgezogen werden,
-  sobald ein solcher Fall real auftritt (so wie `test_categorization.py` nach
-  der Live-Analyse entstanden ist).
+- If your real Ravelry library changes (new patterns, new collections,
+  deleted entries), all tests stay green unchanged - they don't react to
+  that automatically, since they never talk to the real data.
+- The tests protect against **logic errors** in the code (e.g. the bug
+  found where inline comments in `ignore.txt` weren't being stripped
+  correctly), but not against Ravelry delivering a **new, previously
+  unknown data shape** in the future that isn't covered by any of the
+  five categories in `categorize_item()`.
+- If a new construct shows up in the real library that doesn't currently
+  fit, it would end up as `orphan` or `single_pattern_source` and become
+  visible in the `skipped_non_downloadable.txt` report (never silently
+  disappear) - but a test for it would have to be added manually once
+  such a case actually occurs (the same way `test_categorization.py` came
+  about after the live analysis).
 
 ---
 
-## Browser-Login (für kostenpflichtige Downloads)
+## Browser login (for paid downloads)
 
-Ravelry trennt zwei Auth-Systeme:
+Ravelry separates two auth systems:
 
-- **REST-API** (`api.ravelry.com`): Basic Auth mit den API-Keys aus `.env`.
-  Funktioniert für alle `GET`-Abfragen und für **kostenlose** Pattern-Downloads
-  (`/dls/{id}/{code}`-URLs leiten direkt auf eine vorsignierte S3-URL weiter).
-- **Datei-Download** (`www.ravelry.com`): Für **alle anderen** PDFs (gekaufte
-  Einzelpattern, eBooks, Collections, Bundle-Teile) wird eine eingeloggte
-  **Browser-Session** (Cookie-Login) verlangt. Die API-Keys werden hier nicht
-  akzeptiert – ohne gültige Session landet man auf der Login-Seite statt beim PDF.
+- **REST API** (`api.ravelry.com`): Basic Auth with the API keys from
+  `.env`. Works for all `GET` queries and for **free** pattern downloads
+  (`/dls/{id}/{code}` URLs redirect directly to a pre-signed S3 URL).
+- **File download** (`www.ravelry.com`): For **all other** PDFs
+  (purchased individual patterns, eBooks, collections, bundle parts), a
+  logged-in **browser session** (cookie login) is required. The API keys
+  are not accepted here - without a valid session you end up on the login
+  page instead of the PDF.
 
-Beide Scripts (`ravelry-test.py`, `ravelry-downloader.py`) behandeln das automatisch:
+Both scripts (`ravelry-test.py`, `ravelry-downloader.py`) handle this automatically:
 
-1. Ein Download-Versuch liefert HTML (Login-Seite) statt eines PDFs.
-2. Das Script öffnet daraufhin automatisch ein **sichtbares** Chromium-Fenster
-   (Playwright) mit der Ravelry-Login-Seite.
-3. Du loggst dich dort **manuell** ein (Username/Passwort, ggf. 2FA) – das Script
-   wartet bis zu 5 Minuten darauf.
-4. Nach erfolgreichem Login werden die Session-Cookies lokal gespeichert
-   (`.ravelry_session.json`) und für alle weiteren Downloads in diesem **und
-   folgenden** Läufen wiederverwendet, bis die Session abläuft.
+1. A download attempt returns HTML (login page) instead of a PDF.
+2. The script then automatically opens a **visible** Chromium window
+   (Playwright) with the Ravelry login page.
+3. You log in there **manually** (username/password, 2FA if needed) - the
+   script waits for up to 5 minutes.
+4. After a successful login, the session cookies are saved locally
+   (`.ravelry_session.json`) and reused for all further downloads in this
+   **and subsequent** runs, until the session expires.
 
 ```python
-# ravelry_common.py – zentrale Funktion
-ensure_browser_login(force: bool = False) -> dict  # gibt Cookies als dict zurück
-clear_browser_session()                            # löscht die gespeicherte Session
+# ravelry_common.py - central function
+ensure_browser_login(force: bool = False) -> dict  # returns cookies as a dict
+clear_browser_session()                            # deletes the saved session
 ```
 
-> 🔒 `.ravelry_session.json` enthält Login-Cookies und ist über `.gitignore`
-> vom Commit ausgeschlossen. Niemals teilen oder committen!
+> 🔒 `.ravelry_session.json` contains login cookies and is excluded from
+> commits via `.gitignore`. Never share or commit it!
 
-**Troubleshooting Login:**
-- Browser öffnet sich nicht / Fehler beim Start → Playwright-Browser + System-Deps
-  installieren (siehe Setup Schritt 3).
-- Login hängt / Timeout nach 5 Minuten → Script erneut starten, ggf.
-  `.ravelry_session.json` vorher löschen.
-- Nach Passwortänderung schlagen Downloads plötzlich fehl → alte Session ist
-  ungültig; `.ravelry_session.json` löschen, nächster Lauf fragt neu nach Login.
+**Login troubleshooting:**
+- Browser doesn't open / fails to start → install the Playwright browser +
+  system deps (see setup step 3).
+- Login hangs / times out after 5 minutes → restart the script, deleting
+  `.ravelry_session.json` first if needed.
+- Downloads suddenly fail after a password change → the old session is
+  invalid; delete `.ravelry_session.json`, the next run will prompt for a
+  fresh login.
 
 ---
 
-## Alternativer Aufruf via `uv`-Projektumgebung
+## Alternative invocation via the `uv` project environment
 
-Das Projekt hat außerdem eine lokale `uv`-Umgebung (`.venv`). Diese nutzen:
+The project also has a local `uv` environment (`.venv`). To use it:
 
 ```bash
-# Abhängigkeiten installieren / aktualisieren
+# Install / update dependencies
 uv sync
 
-# Script in der Projektumgebung ausführen
+# Run the script in the project environment
 uv run --project . ravelry-downloader.py
 ```
 
-> Unterschied: `uv run script.py` (ohne `--project`) nutzt ein isoliertes Wegwerf-Venv
-> aus dem Script-Header. `uv run --project .` nutzt das persistente Projekt-Venv aus
-> `pyproject.toml` – sinnvoll wenn zusätzliche Pakete lokal installiert sind oder wenn
-> Playwright-Browser-Binaries bereits für dieses Venv installiert wurden.
+> Difference: `uv run script.py` (without `--project`) uses an isolated,
+> throwaway venv from the script header. `uv run --project .` uses the
+> persistent project venv from
+> `pyproject.toml` - useful when additional packages are installed
+> locally, or when Playwright browser binaries have already been
+> installed for this venv.
 
 ---
 
-## Projektstruktur
+## Project structure
 
 ```
 .
-├── .env                     # API-Keys (nicht committen!)
-├── .ravelry_session.json    # Browser-Login-Cookies (wird erzeugt, nicht committen!)
-├── .python-version          # Python 3.12 (für uv)
-├── pyproject.toml           # Projektdefinition
-├── uv.lock                  # Gesperrte Abhängigkeiten
+├── .env                     # API keys (do not commit!)
+├── .ravelry_session.json    # Browser login cookies (generated, do not commit!)
+├── .python-version          # Python 3.12 (for uv)
+├── pyproject.toml           # Project definition
+├── uv.lock                  # Locked dependencies
 │
-├── ravelry_common.py        # Gemeinsamer Helper: API, Downloads, Browser-Login
-├── ravelry-test.py          # API-Test: erste PDFs aller Varianten herunterladen
-├── ravelry-downloader.py    # Vollständiger Bibliotheks-Download
-├── ravelry.py                # Stash & Projekte als DataFrame
+├── ravelry_common.py        # Shared helper: API, downloads, browser login
+├── ravelry-test.py          # API test: download the first PDF of every variant
+├── ravelry-downloader.py    # Full library download
+├── ravelry.py                # Stash & projects as a DataFrame
 │
-├── tests/                    # pytest-Suite (offline, keine echten API-Calls)
+├── tests/                    # pytest suite (offline, no real API calls)
 │   ├── conftest.py
 │   ├── test_ignore_logic.py
 │   ├── test_collection_sync.py
@@ -295,27 +301,27 @@ uv run --project . ravelry-downloader.py
 │   └── test_ravelry_common.py
 │
 ├── docs/
-│   └── ravelry-api-kb.md   # API-Dokumentation / Knowledge Base
+│   └── ravelry-api-kb.md   # API documentation / knowledge base
 │
-├── ravelry_downloads/       # Zielordner Downloader (wird angelegt, ggf. NAS-Symlink)
-│   ├── ignore.txt           # EXCLUDE: Dateinamen-Filter (wird beim ersten Start angelegt)
-│   ├── collections.txt     # INCLUDE: Collection-Freigabe-Katalog (wird beim ersten Start angelegt)
-│   ├── .collection_sync.json  # Merkt sich bereits in den Katalog eingetragene IDs
-│   ├── skipped_non_downloadable.txt  # Log: Einträge ohne Download-Pfad
-│   └── excluded_by_ignore.txt        # Log: nicht heruntergeladene Einträge
-└── test_downloads/          # Zielordner Test-Script (wird angelegt)
+├── ravelry_downloads/       # Downloader target folder (created automatically, may be a NAS symlink)
+│   ├── ignore.txt           # EXCLUDE: filename filter (created on first run)
+│   ├── collections.txt     # INCLUDE: collection opt-in catalog (created on first run)
+│   ├── .collection_sync.json  # Remembers IDs already added to the catalog
+│   ├── skipped_non_downloadable.txt  # Log: entries without a download path
+│   └── excluded_by_ignore.txt        # Log: entries not downloaded
+└── test_downloads/          # Test script target folder (created automatically)
 ```
 
 ---
 
-## Fehlersuche
+## Troubleshooting
 
-| Problem | Lösung |
+| Problem | Solution |
 |---|---|
 | `pyenv: version '3.12' is not installed` | `uv python install 3.12` |
-| `401 Unauthorized` | Keys in `.env` prüfen; Personal Key ≠ Password |
-| Download ergibt kein PDF | API-Response wird im Terminal ausgegeben – `Content-Type` und Vorschau prüfen |
-| `symbol lookup error` beim Browser-Start | System-Deps fehlen: `sudo uv run --project . python3 -m playwright install-deps chromium` |
-| Browser startet, aber kein Fenster sichtbar | Unter WSL: WSLg muss aktiv sein (`echo $DISPLAY` sollte `:0` o.ä. zeigen) |
-| Login-Timeout nach 5 Minuten | Script neu starten; bei dauerhaften Problemen `.ravelry_session.json` löschen |
-| `SSL`-Fehler | `uv run --no-verify-ssl ravelry-downloader.py` (Firmen-Proxy) |
+| `401 Unauthorized` | Check the keys in `.env`; personal key ≠ password |
+| Download doesn't return a PDF | The API response is printed in the terminal - check `Content-Type` and the preview |
+| `symbol lookup error` when starting the browser | Missing system deps: `sudo uv run --project . python3 -m playwright install-deps chromium` |
+| Browser starts, but no window is visible | On WSL: WSLg must be active (`echo $DISPLAY` should show `:0` or similar) |
+| Login timeout after 5 minutes | Restart the script; if the problem persists, delete `.ravelry_session.json` |
+| `SSL` error | `uv run --no-verify-ssl ravelry-downloader.py` (corporate proxy) |
