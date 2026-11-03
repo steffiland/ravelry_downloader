@@ -4,11 +4,12 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
+    { name = "Steffi", email = "2899791+steffiland@users.noreply.github.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.15"
 dependencies = [
-    "pandas>=3.0.5",
-    "playwright>=1.63.0",
+    "pandas>=3.1.0",
+    "playwright>=1.64.1",
     "python-dotenv>=1.2.4",
     "requests>=2.34.2",
 ]
@@ -17,13 +18,5 @@ dependencies = [
 test = "test:main"
 
 [build-system]
-requires = ["uv_build>=0.13.6,<0.14.0"]
+requires = ["uv_build>=0.12.21,<0.13.0"]
 build-backend = "uv_build"
-
-[dependency-groups]
-dev = [
-    "pytest>=9.1.1",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]

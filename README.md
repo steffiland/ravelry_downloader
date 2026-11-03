@@ -22,7 +22,7 @@ Create an app at [ravelry.com/pro/developer](https://www.ravelry.com/pro/develop
 - Auth type: **Basic Auth: Personal Key**
 - Produces two keys: **Access Key** (= username) and **Personal Key** (= password)
 
-### 2. Create a `.env` file
+### 2. Create an `.env` file
 
 ```
 RAVELRY_ACCESS_KEY=your_access_key
@@ -33,44 +33,24 @@ The `.env` file lives in the project root and is excluded from commits via `.git
 
 ### 3. Install the Playwright browser (one time)
 
-Downloading paid content requires an actual browser login (see the
-"Browser login" section below for details). For this, install the
-Chromium binaries from Playwright once:
+Downloading paid ravelry content requires an actual browser login 
+(see the "Browser login" section below for details).
+For this, install the Chromium binaries from Playwright once:
 
 ```bash
-uv run --project . python3 -m playwright install chromium
-```
+uv sync
+# because already done: `uv init --app; uv add playwright pandas requests python-dotenv`
+#   to create uv.local and pyproject.toml
+uv run playwright install chromium
 
-On WSL/Linux, additional system libraries may be needed
-(audio/Mesa/font/X11) for the browser to start in headful mode:
-
-```bash
-sudo uv run --project . python3 -m playwright install-deps chromium
+# On WSL/Linux, additional system libraries may be needed
+# (audio/Mesa/font/X11) for the browser to start in headful mode:
+uv run playwright install-deps chromium
 ```
 
 ---
 
 ## Running the scripts
-
-All scripts are **self-contained and runnable** with `uv run` - they declare
-their dependencies in the file header (`# /// script`), and uv installs
-them automatically into a temporary venv. Shared logic (API access,
-downloads, browser login) lives in `ravelry_common.py`, which is imported
-by all scripts.
-
-### Download test (`ravelry-test.py`)
-
-Tests all pattern variants (free, paid, individual purchase, eBook,
-collection, bundle) and downloads the first example of each. Useful for
-debugging and exploring the API structure.
-
-```bash
-uv run ravelry-test.py
-# or via the project environment:
-uv run --project . ravelry-test.py
-```
-
-Downloads end up in `test_downloads/`.
 
 ### Full library download (`ravelry-downloader.py`)
 
@@ -79,8 +59,6 @@ individual patterns), with skip logic for files that already exist.
 
 ```bash
 uv run ravelry-downloader.py
-# or via the project environment:
-uv run --project . ravelry-downloader.py
 ```
 
 Downloads end up in `ravelry_downloads/`.

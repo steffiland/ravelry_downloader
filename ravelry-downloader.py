@@ -1,11 +1,5 @@
 #!/usr/bin/env -S uv run
-# /// script
-# dependencies = [
-#   "requests",
-#   "python-dotenv",
-#   "playwright",
-# ]
-# ///
+# -*- coding: utf-8 -*-
 
 """
 Ravelry PDF Downloader
